@@ -1,6 +1,6 @@
-// pybind11 module "phobos_filters" wrapping tracker.hpp.
+// pybind11 module "filter_bindings" wrapping tracker.hpp.
 //
-//   import numpy as np, phobos_filters as pf
+//   import numpy as np, filter_bindings as pf
 //   bank = pf.TrackerBank(pf.TrackerConfig(), threads=4)
 //   bank.ingest_array(arr)      # arr: (N, 8) float64 = id, t, x, y, z, rc, vr, d
 //   p = bank.predict(7, 12.5)   # p.x, p.y, p.z, p.sx ...
@@ -12,7 +12,7 @@
 
 namespace py = pybind11;
 
-PYBIND11_MODULE(phobos_filters, m) {
+PYBIND11_MODULE(filter_bindings, m) {
     m.doc() = "Alpha-beta-gamma / Kalman object tracking";
 
     py::enum_<FilterType>(m, "FilterType")

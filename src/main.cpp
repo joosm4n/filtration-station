@@ -115,6 +115,32 @@ static void draw_line(
     ImPlot::PlotLine(label, xs, ys, n, spec);
 }
 
+static void draw_line_lod(
+    const char* label,
+    const double* xs,
+    const double* ys,
+    int n,
+    const ImVec4& col,
+    bool dots,
+    float weight = 1.5f
+) {
+    static thread_local Decimated buf; // reused to avoid reallocating
+    const ImPlotRect lim = ImPlot::GetPlotLimits();
+    const int px = std::max(1, (int)ImPlot::GetPlotSize().x);
+
+    decimate_minmax(xs, ys, n, lim.X.Min, lim.X.Max, px, buf);
+    const bool sparse = (int)buf.x.size() < px; // not decimated -> show dots
+    draw_line(
+        label,
+        buf.x.data(),
+        buf.y.data(),
+        (int)buf.x.size(),
+        col,
+        dots && sparse,
+        weight
+    );
+}
+
 static void draw_crosses(
     const char* label,
     const double* xs,
@@ -130,6 +156,64 @@ static void draw_crosses(
     spec.MarkerFillColor = col;
     spec.MarkerLineColor = col;
     ImPlot::PlotScatter(label, xs, ys, n, spec);
+}
+
+#include <cstdint>
+#include <unordered_set>
+
+// Draws crosses with LOD: skips points outside the view, and keeps at most one
+// point per `cell_px` x `cell_px` screen cell. Pass fitting=true on the frame
+// where SetNextAxesToFit is active so the auto-fit sees every point.
+static void draw_crosses_lod(
+    const char* label,
+    const double* xs,
+    const double* ys,
+    int n,
+    const ImVec4& col,
+    bool fitting,
+    float cell_px = 4.0f
+) {
+    if (n <= 0)
+        return;
+
+    // small sets or fit frame: draw everything
+    if (fitting || n < 1000) {
+        draw_crosses(label, xs, ys, n, col);
+        return;
+    }
+
+    const ImPlotRect lim = ImPlot::GetPlotLimits();
+    const ImVec2 sz = ImPlot::GetPlotSize();
+    const double w = lim.X.Max - lim.X.Min, h = lim.Y.Max - lim.Y.Min;
+    if (w <= 0.0 || h <= 0.0 || sz.x <= 0.0f || sz.y <= 0.0f) {
+        draw_crosses(label, xs, ys, n, col);
+        return;
+    }
+    const double sx = sz.x / w, sy = sz.y / h;
+
+    static thread_local std::vector<double> bx, by;
+    static thread_local std::unordered_set<uint64_t> seen;
+    bx.clear();
+    by.clear();
+    seen.clear();
+
+    const double margin = cell_px * 2; // keep crosses that straddle the edge
+    for (int i = 0; i < n; ++i) {
+        const double px = (xs[i] - lim.X.Min) * sx;
+        const double py = (ys[i] - lim.Y.Min) * sy;
+        if (px < -margin || px > sz.x + margin || py < -margin
+            || py > sz.y + margin)
+            continue;
+        const uint64_t cx =
+            (uint32_t)(int32_t)std::floor((px + margin) / cell_px);
+        const uint64_t cy =
+            (uint32_t)(int32_t)std::floor((py + margin) / cell_px);
+        if (seen.insert((cx << 32) | cy).second) {
+            bx.push_back(xs[i]);
+            by.push_back(ys[i]);
+        }
+    }
+    draw_crosses(label, bx.data(), by.data(), (int)bx.size(), col);
 }
 
 static ImVec4 body_col(int b) {
@@ -337,9 +421,9 @@ int main() {
             changed |= ImGui::SliderFloat(
                 "meas. std (R)",
                 &p.meas_std,
-                0.001f,
                 1.0f,
-                "%.3f",
+                20.0f,
+                "%.2f",
                 ImGuiSliderFlags_Logarithmic
             );
             changed |= ImGui::SliderFloat(
@@ -352,6 +436,26 @@ int main() {
             );
         }
         changed |= ImGui::SliderFloat("initial v", &p.v0, -2.0f, 2.0f);
+
+        ImGui::SeparatorText("Sensor spec (1-sigma)");
+        changed |= ImGui::Checkbox("use sensor noise for x/y/z", &p.use_sensor);
+        changed |=
+            ImGui::SliderFloat("[x y z] sigma [m]", &p.sig_pos, 0.0f, 20.0f);
+        changed |= ImGui::SliderFloat("r_c sigma [m]", &p.sig_rc, 0.0f, 20.0f);
+        changed |= ImGui::SliderFloat(
+            "v_r sigma [m/s]",
+            &p.sig_vr,
+            0.0f,
+            1.0f,
+            "%.3f"
+        );
+        changed |= ImGui::SliderFloat(
+            "diameter sigma [frac]",
+            &p.sig_diam_frac,
+            0.0f,
+            0.5f,
+            "%.3f"
+        );
 
         ImGui::SeparatorText("Run length");
         changed |= ImGui::SliderFloat("duration [s]", &p.duration, 0.5f, 60.0f);
@@ -423,10 +527,16 @@ int main() {
                     Body& B = p.bodies[b];
                     ImGui::Checkbox("show", &show_body[b]);
                     changed |=
-                        ImGui::SliderFloat2("start pos", &B.x0, -5.0f, 5.0f);
+                        ImGui::SliderFloat3("start pos", &B.x0, -5.0f, 5.0f);
                     changed |=
-                        ImGui::SliderFloat2("start vel", &B.vx, -3.0f, 3.0f);
-                    changed |= ImGui::SliderFloat2("accel", &B.ax, -2.0f, 2.0f);
+                        ImGui::SliderFloat3("start vel", &B.vx, -3.0f, 3.0f);
+                    changed |= ImGui::SliderFloat3("accel", &B.ax, -2.0f, 2.0f);
+                    changed |= ImGui::SliderFloat(
+                        "diameter [m]",
+                        &B.diameter,
+                        1.0f,
+                        20000.0f
+                    );
                     ImGui::TreePop();
                 }
                 ImGui::PopID();
@@ -506,7 +616,7 @@ int main() {
                                     continue;
                                 const Track& k = result.tracks[b];
                                 const ImVec4 c = body_col(b);
-                                draw_line(
+                                draw_line_lod(
                                     L("true", b),
                                     k.tx.data(),
                                     k.ty.data(),
@@ -515,14 +625,15 @@ int main() {
                                     false,
                                     1.0f
                                 );
-                                draw_crosses(
+                                draw_crosses_lod(
                                     L("meas", b),
                                     k.zx.data(),
                                     k.zy.data(),
                                     m,
-                                    kColMeas
+                                    kColMeas,
+                                    refit
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("estimate", b),
                                     k.fx->x_k.data(),
                                     k.fy->x_k.data(),
@@ -530,7 +641,7 @@ int main() {
                                     c,
                                     true
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("forecast", b),
                                     k.px.data(),
                                     k.py.data(),
@@ -565,7 +676,7 @@ int main() {
                                     continue;
                                 const Track& k = result.tracks[b];
                                 const ImVec4 c = body_col(b);
-                                draw_line(
+                                draw_line_lod(
                                     L("x true", b),
                                     t + 1,
                                     k.tx.data(),
@@ -574,7 +685,7 @@ int main() {
                                     false,
                                     1.0f
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("y true", b),
                                     t + 1,
                                     k.ty.data(),
@@ -583,7 +694,7 @@ int main() {
                                     false,
                                     1.0f
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("x", b),
                                     t,
                                     k.fx->x_k.data(),
@@ -591,7 +702,7 @@ int main() {
                                     c,
                                     true
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("y", b),
                                     t,
                                     k.fy->x_k.data(),
@@ -599,7 +710,7 @@ int main() {
                                     dim(c),
                                     true
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("x forecast", b),
                                     k.pt.data(),
                                     k.px.data(),
@@ -608,7 +719,7 @@ int main() {
                                     false,
                                     1.0f
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("y forecast", b),
                                     k.pt.data(),
                                     k.py.data(),
@@ -629,7 +740,7 @@ int main() {
                                     continue;
                                 const Track& k = result.tracks[b];
                                 const ImVec4 c = body_col(b);
-                                draw_line(
+                                draw_line_lod(
                                     L("x true", b),
                                     t + 1,
                                     k.tvx.data(),
@@ -638,7 +749,7 @@ int main() {
                                     false,
                                     1.0f
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("y true", b),
                                     t + 1,
                                     k.tvy.data(),
@@ -647,7 +758,7 @@ int main() {
                                     false,
                                     1.0f
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("x", b),
                                     t,
                                     k.fx->v_k.data(),
@@ -655,7 +766,7 @@ int main() {
                                     c,
                                     true
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("y", b),
                                     t,
                                     k.fy->v_k.data(),
@@ -675,7 +786,7 @@ int main() {
                                     continue;
                                 const Track& k = result.tracks[b];
                                 const ImVec4 c = body_col(b);
-                                draw_line(
+                                draw_line_lod(
                                     L("x true", b),
                                     t + 1,
                                     k.tax.data(),
@@ -684,7 +795,7 @@ int main() {
                                     false,
                                     1.0f
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("y true", b),
                                     t + 1,
                                     k.tay.data(),
@@ -693,7 +804,7 @@ int main() {
                                     false,
                                     1.0f
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("x", b),
                                     t,
                                     k.fx->a_k.data(),
@@ -701,7 +812,7 @@ int main() {
                                     c,
                                     true
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("y", b),
                                     t,
                                     k.fy->a_k.data(),
@@ -723,7 +834,7 @@ int main() {
                                     continue;
                                 const Track& k = result.tracks[b];
                                 const ImVec4 c = body_col(b);
-                                draw_line(
+                                draw_line_lod(
                                     L("x RMS", b),
                                     result.sweep_h.data(),
                                     k.rms_x.data(),
@@ -731,7 +842,7 @@ int main() {
                                     c,
                                     false
                                 );
-                                draw_line(
+                                draw_line_lod(
                                     L("y RMS", b),
                                     result.sweep_h.data(),
                                     k.rms_y.data(),
@@ -740,7 +851,7 @@ int main() {
                                     false
                                 );
                                 if (!k.sig_x.empty())
-                                    draw_line(
+                                    draw_line_lod(
                                         L("x sigma", b),
                                         result.sweep_h.data(),
                                         k.sig_x.data(),
@@ -767,7 +878,7 @@ int main() {
                                 if (!show_body[b])
                                     continue;
                                 const Track& k = result.tracks[b];
-                                draw_line(
+                                draw_line_lod(
                                     L("err", b),
                                     t + 1,
                                     k.err.data(),
@@ -777,7 +888,7 @@ int main() {
                                     1.0f
                                 );
                             }
-                            draw_line(
+                            draw_line_lod(
                                 "mean of all bodies",
                                 t + 1,
                                 result.mean_err.data(),
@@ -793,7 +904,7 @@ int main() {
                                 "running avg (%.3f)##runavg",
                                 result.mean_err_scored
                             );
-                            draw_line(
+                            draw_line_lod(
                                 avg_lab,
                                 t + 1,
                                 result.run_avg.data(),

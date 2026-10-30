@@ -10,8 +10,8 @@ add_subdirectory(external/glm)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-# set(COMPILER_FLAGS "-Wall -ggdb -Wno-unused -Werror=return-type -rdynamic")
-set(COMPILER_FLAGS "-Wall -Ofast -Wno-unused -Werror=return-type")
+set(COMPILER_FLAGS "-Wall -ggdb -Wno-unused -Werror=return-type -rdynamic")
+# set(COMPILER_FLAGS "-Wall -Ofast -Wno-unused -Werror=return-type")
 set(CMAKE_C_FLAGS ${COMPILER_FLAGS})
 set(CMAKE_CXX_FLAGS  ${COMPILER_FLAGS})
 

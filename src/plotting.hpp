@@ -86,6 +86,12 @@ static void visit_fields(AppState& s, F&& f) {
     f("show_avg", s.show_avg);
     f("auto_run", s.auto_run);
     f("threads", p.threads);
+    f("target", p.target);
+    f("use_sensor", p.use_sensor);
+    f("sig_pos", p.sig_pos);
+    f("sig_rc", p.sig_rc);
+    f("sig_vr", p.sig_vr);
+    f("sig_diam_frac", p.sig_diam_frac);
 }
 
 static void put(ImGuiTextBuffer* o, const char* k, float v) {
@@ -112,23 +118,29 @@ static void get(const char* s, bool& v) {
     v = std::atoi(s) != 0;
 }
 
-inline void clamp_params(Params& p) {
-    p.dt = std::max(p.dt, 0.001f);
-    p.duration = std::clamp(p.duration, 0.01f, p.dt * 100000.0f);
-    p.meas_std = std::max(p.meas_std, 1e-4f);
-    p.p0 = std::max(p.p0, 1e-6f);
-    p.q = std::max(p.q, 0.0f);
-    p.noise = std::max(p.noise, 0.0f);
-    p.horizon = std::max(p.horizon, 0.0f);
-    p.max_horizon = std::max(p.max_horizon, 0.01f);
-    p.warmup = std::max(p.warmup, 0.0f);
-    p.n_bodies = std::clamp(p.n_bodies, 1, Body::MAX_BODIES);
-    if (p.filter != FilterType::ABG && p.filter != FilterType::KALMAN)
-        p.filter = FilterType::ABG;
-    if (p.signal != SignalType::SINE && p.signal != SignalType::BODIES)
-        p.signal = SignalType::BODIES;
-    p.threads = std::clamp(p.threads, 1, std::max(1, static_cast<int>(16)));
-}
+// -- moved to filters.hpp ---
+// inline void clamp_params(Params& p) {
+//     p.dt = std::max(p.dt, 0.001f);
+//     p.duration = std::clamp(p.duration, 0.01f, p.dt * 100000.0f);
+//     p.meas_std = std::max(p.meas_std, 1e-4f);
+//     p.p0 = std::max(p.p0, 1e-6f);
+//     p.q = std::max(p.q, 0.0f);
+//     p.noise = std::max(p.noise, 0.0f);
+//     p.horizon = std::max(p.horizon, 0.0f);
+//     p.max_horizon = std::max(p.max_horizon, 0.01f);
+//     p.warmup = std::max(p.warmup, 0.0f);
+//     p.n_bodies = std::clamp(p.n_bodies, 1, Body::MAX_BODIES);
+//     if (p.filter != FilterType::ABG && p.filter != FilterType::KALMAN)
+//         p.filter = FilterType::ABG;
+//     if (p.signal != SignalType::SINE && p.signal != SignalType::BODIES)
+//         p.signal = SignalType::BODIES;
+//     p.threads = std::clamp(p.threads, 1, std::max(1, static_cast<int>(16)));
+//     p.target = std::max(p.target, 0.0f);
+//     p.sig_pos = std::max(p.sig_pos, 0.0f);
+//     p.sig_rc = std::max(p.sig_rc, 0.0f);
+//     p.sig_vr = std::max(p.sig_vr, 0.0f);
+//     p.sig_diam_frac = std::max(p.sig_diam_frac, 0.0f);
+// }
 
 // Fall back to safe values if the file was edited by hand or comes from an older version.
 static void sanitize(AppState& s) {
@@ -159,6 +171,15 @@ static void settings_line(
         return;
     const std::string key(line, eq - line);
     const char* val = eq + 1;
+
+    if (key.rfind("bodyx", 0) == 0 && key.size() > 5 && std::isdigit(key[5])) {
+        const int b = std::atoi(key.c_str() + 5);
+        if (b >= 0 && b < Body::MAX_BODIES) {
+            Body& B = s.p.bodies[b];
+            std::sscanf(val, "%f,%f,%f,%f", &B.z0, &B.vz, &B.az, &B.diameter);
+        }
+        return;
+    }
 
     if (key.rfind("body", 0) == 0 && key.size() > 4 && std::isdigit(key[4])) {
         const int b = std::atoi(key.c_str() + 4);
@@ -217,9 +238,75 @@ settings_write(ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* out) {
             B.ay,
             s.show_body[b] ? 1 : 0
         );
+        out->appendf(
+            "bodyx%d=%.9g,%.9g,%.9g,%.9g\n",
+            b,
+            B.z0,
+            B.vz,
+            B.az,
+            B.diameter
+        );
     }
     out->appendf("order=");
     for (size_t i = 0; i < s.order.size(); ++i)
         out->appendf("%s%d", i ? "," : "", s.order[i]);
     out->append("\n\n");
+}
+
+struct Decimated {
+    std::vector<double> x, y;
+};
+
+// xs must be monotonic increasing. Keeps min & max of each pixel bucket,
+// in original order, so the drawn line looks the same as the full one.
+static void decimate_minmax(
+    const double* xs,
+    const double* ys,
+    int n,
+    double x_min,
+    double x_max,
+    int pixels,
+    Decimated& out
+) {
+    out.x.clear();
+    out.y.clear();
+
+    // visible index range (binary search, with one point of margin each side)
+    int lo = (int)(std::lower_bound(xs, xs + n, x_min) - xs);
+    int hi = (int)(std::upper_bound(xs, xs + n, x_max) - xs);
+    lo = std::max(0, lo - 1);
+    hi = std::min(n, hi + 1);
+    const int cnt = hi - lo;
+
+    if (cnt <= pixels * 2 || pixels <= 0) { // already sparse enough
+        out.x.assign(xs + lo, xs + hi);
+        out.y.assign(ys + lo, ys + hi);
+        return;
+    }
+
+    out.x.reserve(pixels * 2 + 2);
+    out.y.reserve(pixels * 2 + 2);
+    const double per = (double)cnt / pixels;
+
+    for (int px = 0; px < pixels; ++px) {
+        const int a = lo + (int)(px * per);
+        const int b = std::min(hi, lo + (int)((px + 1) * per));
+        if (a >= b)
+            continue;
+
+        int imin = a, imax = a;
+        for (int i = a + 1; i < b; ++i) {
+            if (ys[i] < ys[imin])
+                imin = i;
+            if (ys[i] > ys[imax])
+                imax = i;
+        }
+        const int first = std::min(imin, imax), second = std::max(imin, imax);
+        out.x.push_back(xs[first]);
+        out.y.push_back(ys[first]);
+        if (second != first) {
+            out.x.push_back(xs[second]);
+            out.y.push_back(ys[second]);
+        }
+    }
 }

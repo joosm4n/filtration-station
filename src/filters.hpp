@@ -8,6 +8,7 @@
 //   f->update(dt, f->innovation(measurement));
 //   // history of estimates: f->x_k, f->v_k, f->a_k  (one entry per step, plus the initial one)
 
+#include <algorithm>
 #include <array>
 #include <glm/glm.hpp>
 #include <memory>
@@ -20,6 +21,9 @@ struct Body {
     float x0, y0;
     float vx, vy;
     float ax, ay;
+    // appended (keeps the SliderFloat2(&B.x0 / &B.vx / &B.ax) pairs valid)
+    float z0 = 0, vz = 0, az = 0;
+    float diameter = 5000.0f; // true average diameter [m]
 
     static constexpr int MAX_BODIES = 100;
 };
@@ -67,7 +71,39 @@ struct Params {
 
     int threads =
         3; // max threads used to run bodies in parallel (including the caller)
+
+    float target = 0.0f;
+
+    // sensor spec (1-sigma)
+    bool use_sensor = true; // true: x/y/z noise = sig_pos instead of `noise`
+    float sig_pos = 2.0f; // [x y z] in Phobos frame [m]
+    float sig_rc = 2.0f; // closest-point distance [m]
+    float sig_vr = 0.02f; // range rate [m/s]
+    float sig_diam_frac = 0.05f; // fraction of true diameter
 };
+
+inline void clamp_params(Params& p) {
+    p.dt = std::max(p.dt, 0.001f);
+    p.duration = std::clamp(p.duration, 0.01f, p.dt * 100000.0f);
+    p.meas_std = std::max(p.meas_std, 1e-4f);
+    p.p0 = std::max(p.p0, 1e-6f);
+    p.q = std::max(p.q, 0.0f);
+    p.noise = std::max(p.noise, 0.0f);
+    p.horizon = std::max(p.horizon, 0.0f);
+    p.max_horizon = std::max(p.max_horizon, 0.01f);
+    p.warmup = std::max(p.warmup, 0.0f);
+    p.n_bodies = std::clamp(p.n_bodies, 1, Body::MAX_BODIES);
+    if (p.filter != FilterType::ABG && p.filter != FilterType::KALMAN)
+        p.filter = FilterType::ABG;
+    if (p.signal != SignalType::SINE && p.signal != SignalType::BODIES)
+        p.signal = SignalType::BODIES;
+    p.threads = std::clamp(p.threads, 1, std::max(1, static_cast<int>(16)));
+    p.target = std::max(p.target, 0.0f);
+    p.sig_pos = std::max(p.sig_pos, 0.0f);
+    p.sig_rc = std::max(p.sig_rc, 0.0f);
+    p.sig_vr = std::max(p.sig_vr, 0.0f);
+    p.sig_diam_frac = std::max(p.sig_diam_frac, 0.0f);
+}
 
 inline constexpr int K_SWEEP_POINTS = 60;
 
@@ -160,18 +196,23 @@ struct KalmanFilter final: FilterBase {
 };
 
 struct Track {
-    std::unique_ptr<FilterBase> fx, fy;
-    std::vector<double> zx, zy; // noisy measurements (line up with t[1:])
-    std::vector<double> tx, ty; // true position
-    std::vector<double> tvx, tvy, tax, tay; // true velocity / acceleration
-    std::vector<double> pt, px,
-        py; // forecast made at each step (pt = t + horizon)
-    std::vector<double> rms_x, rms_y,
+    std::unique_ptr<FilterBase> fx, fy, fz;
+    std::vector<double> zx, zy, zz; // noisy measurements (line up with t[1:])
+    std::vector<double> tx, ty, tz; // true position
+    std::vector<double> tvx, tvy, tvz, tax, tay,
+        taz; // true velocity / acceleration
+    std::vector<double> pt, px, py,
+        pz; // forecast made at each step (pt = t + horizon)
+    std::vector<double> rms_x, rms_y, rms_z,
         sig_x; // error vs look-ahead (sig_x empty for ABG)
     // where this body is predicted to be, `horizon` after the end of the run, and where it really is
-    double fut_x = 0, fut_y = 0, fut_tx = 0, fut_ty = 0;
+    double fut_x = 0, fut_y = 0, fut_z = 0;
+    double fut_tx = 0, fut_ty = 0, fut_tz = 0;
     std::vector<double>
         err; // distance between forecast made at step i and true position at t + horizon
+
+    std::vector<double> m_rc, m_vr, m_d; // measured r_c, v_r, d
+    std::vector<double> t_rc, t_vr, t_d; // true values
 };
 
 struct Result {

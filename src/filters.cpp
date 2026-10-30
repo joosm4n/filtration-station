@@ -1,5 +1,6 @@
 
 #include "filters.hpp" // FilterBase, AbgFilter, KalmanFilter
+#include "glm/geometric.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -15,7 +16,7 @@
 namespace {
 
 struct Truth {
-    double x, y, vx, vy, ax, ay;
+    double x, y, z, vx, vy, vz, ax, ay, az;
 };
 
 Truth truth_at(const Params& p, int b, double t) {
@@ -28,20 +29,26 @@ Truth truth_at(const Params& p, int b, double t) {
         return {
             p.amp_x * sx,
             p.amp_y * sy,
+            0.0,
             p.amp_x * wx * cx,
             p.amp_y * wy * cy,
+            0.0,
             -p.amp_x * wx * wx * sx,
-            -p.amp_y * wy * wy * sy
+            -p.amp_y * wy * wy * sy,
+            0.0,
         };
     }
     const Body& B = p.bodies[b];
     return {
         B.x0 + B.vx * t + 0.5 * B.ax * t * t,
         B.y0 + B.vy * t + 0.5 * B.ay * t * t,
+        B.z0 + B.vz * t + 0.5 * B.az * t * t,
         B.vx + B.ax * t,
         B.vy + B.ay * t,
+        B.vz + B.az * t,
         B.ax,
-        B.ay
+        B.ay,
+        B.az
     };
 }
 
@@ -73,26 +80,18 @@ void run_body(const Params& p, int b, int steps, Track& k) {
     const Truth t0 = truth_at(p, b, 0.0);
     k.fx = FilterBase::make_filter(p, t0.x);
     k.fy = FilterBase::make_filter(p, t0.y);
+    k.fz = FilterBase::make_filter(p, t0.z);
 
     std::mt19937 rng(static_cast<unsigned>(p.seed + b));
-    std::normal_distribution<double> gauss(0.0, std::max(p.noise, 1e-9f));
 
     for (auto* v :
-         {&k.zx,
-          &k.zy,
-          &k.tx,
-          &k.ty,
-          &k.tvx,
-          &k.tvy,
-          &k.tax,
-          &k.tay,
-          &k.pt,
-          &k.px,
-          &k.py,
-          &k.err})
+         {&k.zx,   &k.zy,   &k.zz,  &k.tx,   &k.ty,   &k.tz,  &k.tvx, &k.tvy,
+          &k.tvz,  &k.tax,  &k.tay, &k.taz,  &k.pt,   &k.px,  &k.py,  &k.pz,
+          &k.m_rc, &k.m_vr, &k.m_d, &k.t_rc, &k.t_vr, &k.t_d, &k.err})
         v->reserve(steps);
 
-    std::vector<double> se_x(K_SWEEP_POINTS, 0.0), se_y(K_SWEEP_POINTS, 0.0);
+    std::vector<double> se_x(K_SWEEP_POINTS, 0.0), se_y(K_SWEEP_POINTS, 0.0),
+        se_z(K_SWEEP_POINTS, 0.0);
     std::vector<double> sg_x(K_SWEEP_POINTS, 0.0);
     int scored = 0;
 
@@ -101,44 +100,87 @@ void run_body(const Params& p, int b, int steps, Track& k) {
 
         k.fx->predict(p.dt);
         k.fy->predict(p.dt);
+        k.fz->predict(p.dt);
 
         const Truth a = truth_at(p, b, t);
         k.tx.push_back(a.x);
         k.ty.push_back(a.y);
+        k.tz.push_back(a.z);
         k.tvx.push_back(a.vx);
         k.tvy.push_back(a.vy);
+        k.tvz.push_back(a.vz);
         k.tax.push_back(a.ax);
         k.tay.push_back(a.ay);
+        k.taz.push_back(a.az);
 
-        double zx = a.x, zy = a.y;
-        if (p.noise > 0.0f) {
-            zx += gauss(rng);
-            zy += gauss(rng);
+        const double sp = p.use_sensor ? p.sig_pos : p.noise;
+        std::normal_distribution<double> gp(0.0, std::max(sp, 1e-9));
+        std::normal_distribution<double> g_rc(
+            0.0,
+            std::max<double>(p.sig_rc, 1e-9)
+        );
+        std::normal_distribution<double> g_vr(
+            0.0,
+            std::max<double>(p.sig_vr, 1e-9)
+        );
+        std::normal_distribution<double> g_d(
+            0.0,
+            std::max<double>(p.sig_diam_frac, 1e-9)
+        );
+
+        double zx = a.x, zy = a.y, zz = a.z;
+        if (sp > 0.0f) {
+            zx += gp(rng);
+            zy += gp(rng);
+            zz += gp(rng);
         }
+
+        const double D =
+            (p.signal == SignalType::BODIES) ? p.bodies[b].diameter : 0.0;
+        const double rho =
+            std::max(std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z), 1e-9);
+        const double rc = rho - 0.5 * D;
+        const double vr = (a.x * a.vx + a.y * a.vy + a.z * a.vz) / rho;
+
+        k.t_rc.push_back(rc);
+        k.t_vr.push_back(vr);
+        k.t_d.push_back(D);
+        k.m_rc.push_back(rc + g_rc(rng));
+        k.m_vr.push_back(vr + g_vr(rng));
+        k.m_d.push_back(D * (1.0 + g_d(rng)));
+
         k.zx.push_back(zx);
         k.zy.push_back(zy);
-
+        k.zz.push_back(zz);
         k.fx->update(p.dt, k.fx->innovation(zx));
         k.fy->update(p.dt, k.fy->innovation(zy));
+        k.fz->update(p.dt, k.fz->innovation(zz));
 
-        const Forecast fx = k.fx->forecast(p.horizon);
-        const Forecast fy = k.fy->forecast(p.horizon);
-        k.pt.push_back(t + p.horizon);
+        const double h = p.target > 0.0f ? std::max(0.0, p.target - t)
+                                         : static_cast<double>(p.horizon);
+
+        const Forecast fx = k.fx->forecast(h);
+        const Forecast fy = k.fy->forecast(h);
+        const Forecast fz = k.fz->forecast(h);
+        k.pt.push_back(t + h);
         k.px.push_back(fx.x);
         k.py.push_back(fy.x);
+        k.pz.push_back(fz.x);
 
         const Truth ft = truth_at(p, b, t + p.horizon);
-        k.err.push_back(std::hypot(fx.x - ft.x, fy.x - ft.y));
+        k.err.push_back(std::hypot(fx.x - ft.x, fy.x - ft.y, fz.x - ft.z));
 
         if (t >= p.warmup) {
             ++scored;
             for (int j = 0; j < K_SWEEP_POINTS; ++j) {
-                const double h = p.max_horizon * (j + 1) / K_SWEEP_POINTS;
-                const Forecast ax = k.fx->forecast(h), ay = k.fy->forecast(h);
-                const Truth f = truth_at(p, b, t + h);
-                const double ex = ax.x - f.x, ey = ay.x - f.y;
+                const double h2 = p.max_horizon * (j + 1) / K_SWEEP_POINTS;
+                const Forecast ax = k.fx->forecast(h2), ay = k.fy->forecast(h2),
+                               az = k.fz->forecast(h2);
+                const Truth f = truth_at(p, b, t + h2);
+                const double ex = ax.x - f.x, ey = ay.x - f.y, ez = az.x - f.z;
                 se_x[j] += ex * ex;
                 se_y[j] += ey * ey;
+                se_z[j] += ez * ez;
                 sg_x[j] += std::sqrt(ax.var_x); // NaN for ABG, unused then
             }
         }
@@ -161,9 +203,13 @@ void run_body(const Params& p, int b, int steps, Track& k) {
     const double t_end = steps * p.dt;
     k.fut_x = k.px.back();
     k.fut_y = k.py.back();
-    const Truth f = truth_at(p, b, t_end + p.horizon);
+    k.fut_z = k.pz.back();
+    const double h_end = p.target > 0.0f ? std::max(0.0, p.target - t_end)
+                                         : static_cast<double>(p.horizon);
+    const Truth f = truth_at(p, b, t_end + h_end);
     k.fut_tx = f.x;
     k.fut_ty = f.y;
+    k.fut_tz = f.z;
 }
 
 glm::dmat3 make_F(double dt) {

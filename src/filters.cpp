@@ -1,6 +1,4 @@
-
 #include "filters.hpp" // FilterBase, AbgFilter, KalmanFilter
-#include "glm/geometric.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -210,6 +208,22 @@ void run_body(const Params& p, int b, int steps, Track& k) {
     k.fut_tx = f.x;
     k.fut_ty = f.y;
     k.fut_tz = f.z;
+
+    // true path continued from the end of the run to the look-ahead time
+    k.tx_ext = k.tx;
+    k.ty_ext = k.ty;
+    k.tz_ext = k.tz;
+    for (double te = t_end + p.dt; te < t_end + h_end - 1e-9; te += p.dt) {
+        const Truth e = truth_at(p, b, te);
+        k.tx_ext.push_back(e.x);
+        k.ty_ext.push_back(e.y);
+        k.tz_ext.push_back(e.z);
+    }
+    if (h_end > 0.0) {
+        k.tx_ext.push_back(f.x);
+        k.ty_ext.push_back(f.y);
+        k.tz_ext.push_back(f.z);
+    }
 }
 
 glm::dmat3 make_F(double dt) {

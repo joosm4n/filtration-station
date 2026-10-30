@@ -304,6 +304,8 @@ int main() {
     bool have_result = false;
     SimWorker worker; // all later runs happen on its thread
     bool refit = true;
+    bool was_vis[PLOT_COUNT] =
+        {}; // plots hidden last frame get fitted when shown again
     bool stale = false;
 
     if (auto_run)
@@ -566,10 +568,13 @@ int main() {
         }
 
         // Swap in a finished result (computed on the worker thread) when one is ready.
+        // Only fit the axes for the very first result; later runs keep the user's view.
+        // (Double-click a plot to fit it manually.)
         if (auto fresh = worker.take()) {
             result = std::move(*fresh);
+            if (!have_result)
+                refit = true;
             have_result = true;
-            refit = true;
         }
 
         // ---------------- plots (right) ----------------
@@ -593,7 +598,9 @@ int main() {
             const double* t = result.t.data();
 
             auto draw_plot = [&](int id) {
-                if (refit)
+                const bool fit = refit || !was_vis[id];
+                was_vis[id] = true;
+                if (fit)
                     ImPlot::SetNextAxesToFit();
                 const ImPlotFlags base = ImPlotFlags_NoTitle;
                 const int nt = static_cast<int>(result.tracks.size());
@@ -618,9 +625,9 @@ int main() {
                                 const ImVec4 c = body_col(b);
                                 draw_line_lod(
                                     L("true", b),
-                                    k.tx.data(),
-                                    k.ty.data(),
-                                    m,
+                                    k.tx_ext.data(),
+                                    k.ty_ext.data(),
+                                    (int)k.tx_ext.size(),
                                     kColActual,
                                     false,
                                     1.0f
@@ -631,7 +638,7 @@ int main() {
                                     k.zy.data(),
                                     m,
                                     kColMeas,
-                                    refit
+                                    fit
                                 );
                                 draw_line_lod(
                                     L("estimate", b),
@@ -918,6 +925,9 @@ int main() {
                         break;
                 }
             };
+            for (int id = 0; id < PLOT_COUNT; ++id)
+                if (!vis[id])
+                    was_vis[id] = false;
             std::vector<int> vis_ids;
             for (int id : order)
                 if (vis[id])

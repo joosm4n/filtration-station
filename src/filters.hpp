@@ -199,6 +199,8 @@ struct Track {
     std::unique_ptr<FilterBase> fx, fy, fz;
     std::vector<double> zx, zy, zz; // noisy measurements (line up with t[1:])
     std::vector<double> tx, ty, tz; // true position
+    // true x-y path extended past the end of the run, up to the look-ahead time
+    std::vector<double> tx_ext, ty_ext, tz_ext;
     std::vector<double> tvx, tvy, tvz, tax, tay,
         taz; // true velocity / acceleration
     std::vector<double> pt, px, py,

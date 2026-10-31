@@ -25,7 +25,7 @@ struct Body {
     float z0 = 0, vz = 0, az = 0;
     float diameter = 5000.0f; // true average diameter [m]
 
-    static constexpr int MAX_BODIES = 100;
+    static constexpr int MAX_BODIES = 500;
 };
 
 struct Params {

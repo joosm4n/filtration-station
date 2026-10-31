@@ -2,7 +2,9 @@
 //
 //   import numpy as np, filter_bindings as pf
 //   bank = pf.TrackerBank(pf.TrackerConfig(), threads=4)
-//   bank.ingest_array(arr)      # arr: (N, 8) float64 = id, t, x, y, z, rc, vr, d
+//   bank.ingest_array(arr)      # arr: (N, 8) = id, t, x, y, z, rc, vr, d
+//   bank.ingest_radar_array(rows, ids, now, observer_position, observer_velocity)
+//                              # rows: wso-stm (N, 3, 3) radar publication
 //   p = bank.predict(7, 12.5)   # p.x, p.y, p.z, p.sx ...
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
@@ -103,6 +105,56 @@ PYBIND11_MODULE(filter_bindings, m) {
                     release; // heavy part runs without the GIL
                 return b.ingest(ms);
             }
+        )
+        .def(
+            "ingest_radar_array",
+            [](
+                TrackerBank& b,
+                py::array_t<double, py::array::c_style | py::array::forcecast> rows,
+                py::array_t<int64_t, py::array::c_style | py::array::forcecast> ids,
+                double now,
+                py::array_t<double, py::array::c_style | py::array::forcecast> observer_position,
+                py::array_t<double, py::array::c_style | py::array::forcecast> observer_velocity,
+                double clock_offset
+            ) {
+                if (rows.ndim() != 3 || rows.shape(1) != 3 || rows.shape(2) != 3)
+                    throw std::invalid_argument("expected radar rows shape (N, 3, 3)");
+                if (ids.ndim() != 1 || ids.shape(0) != rows.shape(0))
+                    throw std::invalid_argument("expected ids shape (N,)");
+                if (observer_position.ndim() != 1 || observer_position.shape(0) != 3
+                    || observer_velocity.ndim() != 1 || observer_velocity.shape(0) != 3)
+                    throw std::invalid_argument(
+                        "expected observer position and velocity shape (3,)"
+                    );
+
+                const double* position = observer_position.data();
+                const double* velocity = observer_velocity.data();
+                const double* row = rows.data();
+                const int64_t* id = ids.data();
+                std::vector<Measurement> measurements(rows.shape(0));
+                for (py::ssize_t i = 0; i < rows.shape(0); ++i, row += 9) {
+                    const double source_time = row[6] + clock_offset;
+                    const double lag = now - source_time;
+                    measurements[i] = {
+                        id[i],
+                        source_time,
+                        position[0] - lag * velocity[0] + row[0],
+                        position[1] - lag * velocity[1] + row[1],
+                        position[2] - lag * velocity[2] + row[2],
+                        row[3],
+                        row[4],
+                        row[5]
+                    };
+                }
+                py::gil_scoped_release release;
+                return b.ingest(measurements);
+            },
+            py::arg("rows"),
+            py::arg("ids"),
+            py::arg("now"),
+            py::arg("observer_position"),
+            py::arg("observer_velocity"),
+            py::arg("clock_offset") = 0.0
         )
         .def(
             "predict",

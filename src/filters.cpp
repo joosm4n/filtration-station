@@ -1,4 +1,5 @@
 #include "filters.hpp" // FilterBase, AbgFilter, KalmanFilter
+#include "polyfit.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -269,7 +270,7 @@ void KalmanFilter::predict(double dt) {
     P = F * P * glm::transpose(F) + make_Q(dt, q);
 }
 
-void KalmanFilter::update(double /*dt*/, double r) {
+void KalmanFilter::update(double dt, double r) {
     const double S = P[0][0] + R; // innovation variance (H P H^T + R)
     const glm::dvec3 K = P[0] / S; // Kalman gain: column 0 of P (= P H^T)
 
@@ -295,21 +296,55 @@ Forecast KalmanFilter::forecast(double h) const {
     return {s.x, s.y, s.z, Pf[0][0]};
 }
 
+void PolyFitFilter::predict(double dt) {}
+
+void PolyFitFilter::update(double dt, double r) {
+    this->x_k.push_back(this->x_k.back() + r);
+    this->v_k.push_back(r);
+    this->a_k.push_back(0.0);
+
+    double last_time = 0.0;
+    if (!this->times.empty()) {
+        last_time = this->times.back();
+    }
+    this->times.push_back(last_time + dt);
+    this->pf = poly::polyfit(this->times, this->x_k);
+}
+
+Forecast PolyFitFilter::forecast(double h) const {
+    const auto t = times.back() + h;
+    const auto x = poly::eval(this->pf, t);
+    return {x, this->v_k.back(), 0.0, 0.0};
+}
+
 // x0 = initial position estimate (we start on the actual signal's value at t = 0)
 std::unique_ptr<FilterBase>
 FilterBase::make_filter(const Params& p, double x0) {
     const double v0 = static_cast<double>(p.v0);
-    if (p.filter == FilterType::KALMAN) {
-        return std::make_unique<KalmanFilter>(
-            x0,
-            v0,
-            0.0,
-            p.q,
-            p.meas_std,
-            p.p0
-        );
+    const double a0 = 0.0;
+    switch (p.filter) {
+        case FilterType::KALMAN:
+            return std::make_unique<KalmanFilter>(
+                x0,
+                v0,
+                0.0,
+                p.q,
+                p.meas_std,
+                p.p0
+            );
+        case FilterType::POLYFIT:
+            return std::make_unique<PolyFitFilter>(x0, v0, a0);
+        case FilterType::ABG:
+        default:
+            return std::make_unique<AbgFilter>(
+                x0,
+                v0,
+                a0,
+                p.alpha,
+                p.beta,
+                p.gamma
+            );
     }
-    return std::make_unique<AbgFilter>(x0, v0, 0.0, p.alpha, p.beta, p.gamma);
 }
 
 Forecast AbgFilter::forecast(double h) const {

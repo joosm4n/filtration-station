@@ -8,13 +8,21 @@
 //   f->update(dt, f->innovation(measurement));
 //   // history of estimates: f->x_k, f->v_k, f->a_k  (one entry per step, plus the initial one)
 
+#include "glm/ext/quaternion_geometric.hpp"
+#include "glm/ext/scalar_constants.hpp"
+#include "glm/geometric.hpp"
+#include "polyfit.hpp"
+
 #include <algorithm>
 #include <array>
+#include <ctime>
 #include <glm/glm.hpp>
 #include <memory>
+#include <random>
+#include <sys/stat.h>
 #include <vector>
 
-enum class FilterType : int { ABG = 0, KALMAN = 1 };
+enum class FilterType : int { ABG = 0, KALMAN = 1, POLYFIT = 2 };
 enum class SignalType : int { SINE = 0, BODIES = 1 };
 
 struct Body {
@@ -26,16 +34,141 @@ struct Body {
     float diameter = 5000.0f; // true average diameter [m]
 
     static constexpr int MAX_BODIES = 100;
+    static constexpr double RADIUS = 11100.0f;
+    static constexpr double MU = 707500.0f;
+    static constexpr double VERT_OFFSET = 500.0f;
+    static constexpr double PHOBOS_GRAVITY = 0.0057;
+    static constexpr glm::vec3 PHOBOS_CENTRE = glm::vec3 {0.0f, 0.0f, 0.0f};
+    static constexpr glm::vec3 NORTH = {RADIUS, 0.0f, 0.0f};
+    static constexpr glm::vec3 WEST = {0.0f, RADIUS, 0.0f};
+    static constexpr glm::vec3 SPREAD_M = {300.0f, 300.0f, 500.0f};
+    static constexpr glm::vec3 SHUTTLE_LOC = {0.0f, 0.0f, RADIUS};
+
+    struct ScalingStats {
+        double scaleMin, scaleMax, radarDiameter;
+    };
+
+    static constexpr std::array<ScalingStats, 3> SCALES = {
+        ScalingStats {40.0, 1000.0, 0.08},
+        ScalingStats {20.0, 800.0, 0.05},
+        ScalingStats {10, 400, 0.01}
+    };
+
+    struct NorthWestUp {
+        glm::vec3 north, west, up;
+    };
+
+    static auto clampFloat(double val, double outMin, double outMax) -> double {
+        return glm::min(glm::max(val, outMin), outMax);
+    }
+
+    static auto remapFloat(
+        double val,
+        double inMin,
+        double inMax,
+        double outMin,
+        double outMax
+    ) -> double {
+        return clampFloat(
+            outMin + (outMax - outMin) * (val - inMin) / (inMax - inMin),
+            outMin,
+            outMax
+        );
+    }
+
+    static auto clampVector(glm::vec3 val, glm::vec3 outMin, glm::vec3 outMax)
+        -> glm::vec3 {
+        return glm::min(glm::max(val, outMin), outMax);
+    }
+
+    static auto remapVector(
+        glm::vec3 val,
+        glm::vec3 inMin,
+        glm::vec3 inMax,
+        glm::vec3 outMin,
+        glm::vec3 outMax
+    ) -> glm::vec3 {
+        return clampVector(
+            outMin + (outMax - outMin) * (val - inMin) / (inMax - inMin),
+            outMin,
+            outMax
+        );
+    }
+
+    static auto toNWU(auto loc, double rad) -> NorthWestUp {
+        auto north = glm::normalize(NORTH - loc);
+        auto up = -glm::normalize(PHOBOS_CENTRE - loc);
+        auto west = glm::cross(up, north);
+        return {north, up, west};
+    }
+
+    Body(int seed = (int)std::time(NULL)) {
+        this->reset(seed);
+    }
+
+    void reset(int seed) {
+        constexpr auto locMin = SHUTTLE_LOC - SPREAD_M;
+        constexpr auto locMax = SHUTTLE_LOC + SPREAD_M;
+
+        std::mt19937 gen(seed);
+        std::uniform_real_distribution<> dis(0.0, 1.0);
+        auto randVec = [](auto dis, auto gen) {
+            return glm::vec3 {dis(gen), dis(gen), dis(gen)};
+        };
+        auto loc_random = randVec(dis, gen);
+        auto vel_random = dis(gen);
+        auto size_random = dis(gen);
+        auto azimuth =
+            remapFloat(dis(gen), 0.0, 1.0, 0.0, 2.0 * glm::pi<float>());
+
+        auto loc = remapVector(
+            loc_random,
+            glm::vec3 {0},
+            glm::vec3(1),
+            locMin,
+            locMax
+        );
+        auto NWU = toNWU(loc, RADIUS);
+
+        auto vel_mag_max = std::sqrt(MU / RADIUS);
+        auto vel_mag = remapFloat(
+            vel_random,
+            0.0,
+            1.0,
+            0.05 * vel_mag_max,
+            0.1 * vel_mag_max
+        );
+        auto vel = (float)vel_mag * (NWU.north * (float)glm::cos(azimuth))
+            - NWU.west * (float)glm::sin(azimuth);
+        auto grav = (float)-PHOBOS_GRAVITY * NWU.up;
+        auto scaleStats = SCALES[static_cast<int>(dis(gen) * 3)];
+
+        this->x0 = loc.x;
+        this->y0 = loc.y;
+        this->z0 = loc.z;
+
+        this->vx = vel.x;
+        this->vy = vel.y;
+        this->vz = vel.z;
+
+        this->ax = grav.x;
+        this->ay = grav.y;
+        this->az = grav.z;
+
+        this->diameter = (float)remapFloat(
+            size_random,
+            0.0,
+            1.0,
+            scaleStats.scaleMin,
+            scaleStats.scaleMax
+        );
+    }
 };
 
 struct Params {
     SignalType signal = SignalType::BODIES;
     int n_bodies = 3;
-    std::array<Body, Body::MAX_BODIES> bodies {{
-        Body {0.0, 0.0, 1.0, 0.5, 0.0, -0.5},
-        Body {2.0, 1.0, -0.5, 1.0, 0.3, 0.0},
-        Body {-1.0, 2.0, 0.8, -0.8, -0.2, 0.4},
-    }};
+    std::array<Body, Body::MAX_BODIES> bodies {};
 
     FilterType filter = FilterType::ABG;
 
@@ -80,6 +213,13 @@ struct Params {
     float sig_rc = 2.0f; // closest-point distance [m]
     float sig_vr = 0.02f; // range rate [m/s]
     float sig_diam_frac = 0.05f; // fraction of true diameter
+
+    void seed_bodies() {
+        int body_seed = this->seed + 1000;
+        for (int i = 0; i < this->n_bodies; i++) {
+            this->bodies.at(i).reset(body_seed + i);
+        }
+    }
 };
 
 inline void clamp_params(Params& p) {
@@ -93,7 +233,8 @@ inline void clamp_params(Params& p) {
     p.max_horizon = std::max(p.max_horizon, 0.01f);
     p.warmup = std::max(p.warmup, 0.0f);
     p.n_bodies = std::clamp(p.n_bodies, 1, Body::MAX_BODIES);
-    if (p.filter != FilterType::ABG && p.filter != FilterType::KALMAN)
+    if (p.filter != FilterType::ABG && p.filter != FilterType::KALMAN
+        && p.filter != FilterType::POLYFIT)
         p.filter = FilterType::ABG;
     if (p.signal != SignalType::SINE && p.signal != SignalType::BODIES)
         p.signal = SignalType::BODIES;
@@ -191,30 +332,48 @@ struct KalmanFilter final: FilterBase {
         P(p0) {} // glm::dmat3(scalar) builds a diagonal matrix
 
     void predict(double dt) override;
-    void update(double /*dt*/, double r) override;
+    void update(double dt, double r) override;
+    Forecast forecast(double horizon) const override;
+};
+
+struct PolyFitFilter final: FilterBase {
+    poly::Polynomial pf = {};
+    std::vector<double> times = {};
+
+    PolyFitFilter(double x0, double v0, double a0) : FilterBase(x0, v0, a0), times{0.0} {}
+
+    void predict(double dt) override;
+    void update(double dt, double r) override;
     Forecast forecast(double horizon) const override;
 };
 
 struct Track {
+    // Filters
     std::unique_ptr<FilterBase> fx, fy, fz;
-    std::vector<double> zx, zy, zz; // noisy measurements (line up with t[1:])
-    std::vector<double> tx, ty, tz; // true position
+
+    // noisy measurements (line up with t[1:])
+    std::vector<double> zx, zy, zz;
+    // true position
+    std::vector<double> tx, ty, tz;
     // true x-y path extended past the end of the run, up to the look-ahead time
     std::vector<double> tx_ext, ty_ext, tz_ext;
-    std::vector<double> tvx, tvy, tvz, tax, tay,
-        taz; // true velocity / acceleration
-    std::vector<double> pt, px, py,
-        pz; // forecast made at each step (pt = t + horizon)
-    std::vector<double> rms_x, rms_y, rms_z,
-        sig_x; // error vs look-ahead (sig_x empty for ABG)
+    // true velocity / acceleration
+    std::vector<double> tvx, tvy, tvz, tax, tay, taz;
+
+    // forecast made at each step (pt = t + horizon)
+    std::vector<double> pt, px, py, pz;
+    // error vs look-ahead (sig_x empty for ABG)
+    std::vector<double> rms_x, rms_y, rms_z, sig_x;
     // where this body is predicted to be, `horizon` after the end of the run, and where it really is
     double fut_x = 0, fut_y = 0, fut_z = 0;
     double fut_tx = 0, fut_ty = 0, fut_tz = 0;
-    std::vector<double>
-        err; // distance between forecast made at step i and true position at t + horizon
+    // distance between forecast made at step i and true position at t + horizon
+    std::vector<double> err;
 
-    std::vector<double> m_rc, m_vr, m_d; // measured r_c, v_r, d
-    std::vector<double> t_rc, t_vr, t_d; // true values
+    // measured r_c, v_r, d
+    std::vector<double> m_rc, m_vr, m_d;
+    // true values
+    std::vector<double> t_rc, t_vr, t_d;
 };
 
 struct Result {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <GLFW/glfw3.h>
+#include <cstdio>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -26,8 +27,7 @@ class GenericViewer {
     RunControls drawRunControls(bool& auto_run, bool busy) const {
         RunControls controls;
         ImGui::SeparatorText("Run");
-        controls.auto_run_changed =
-            ImGui::Checkbox("auto rerun", &auto_run);
+        controls.auto_run_changed = ImGui::Checkbox("auto rerun", &auto_run);
         controls.run_requested = ImGui::Button("Run", {-1, 0});
         ImGui::TextDisabled(busy ? "computing..." : "chilling...");
         return controls;
@@ -35,8 +35,13 @@ class GenericViewer {
 
     template<class Setup, class Loaded, class Frame>
     int run(Setup&& setup, Loaded&& loaded, Frame&& frame) {
-        if (!glfwInit())
+        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+        if (!glfwInit()) {
+            const char* err_msg = NULL;
+            glfwGetError(&err_msg);
+            printf("[error] glfw failed to init - %s\n", err_msg);
             return 1;
+        }
         GLFWwindow* window = glfwCreateWindow(
             config_.width,
             config_.height,
@@ -57,11 +62,15 @@ class GenericViewer {
         ImGui_ImplGlfw_InitForOpenGL(window, true);
         ImGui_ImplOpenGL3_Init("#version 130");
 
+        printf("[setup]\n");
         setup();
         ImGui::GetIO().IniFilename = config_.ini_filename;
         ImGui::LoadIniSettingsFromDisk(ImGui::GetIO().IniFilename);
+
+        printf("[loaded]\n");
         loaded();
 
+        printf("[main loop]");
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
             ImGui_ImplOpenGL3_NewFrame();

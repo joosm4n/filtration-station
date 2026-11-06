@@ -8,110 +8,109 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 #include "tracker.hpp"
 
 namespace py = pybind11;
+using namespace pybind11::literals;
 
-PYBIND11_MODULE(filter_bindings, m) {
-    m.doc() = "Alpha-beta-gamma / Kalman object tracking";
+static_assert(
+    sizeof(RadarItem) == 9 * sizeof(float),
+    "RadarItem is not 9 floats"
+);
+static_assert(
+    alignof(RadarItem) <= alignof(float),
+    "RadarItem is over-aligned"
+);
+static_assert(std::is_trivially_copyable_v<RadarItem>);
 
-    py::enum_<FilterType>(m, "FilterType")
-        .value("ABG", FilterType::ABG)
-        .value("KALMAN", FilterType::KALMAN);
+PYBIND11_MAKE_OPAQUE(std::vector<Rock>);
 
-    py::class_<SensorSpec>(m, "SensorSpec")
+namespace pybind11::detail {
+
+template<>
+struct type_caster<glm::vec3> {
+    PYBIND11_TYPE_CASTER(
+        glm::vec3,
+        const_name("numpy.typing.NDArray[numpy.float32]")
+    );
+
+    bool load(handle src, bool convert) {
+        if (!convert && !isinstance<array_t<float>>(src)) {
+            return false;
+        }
+        auto arr =
+            array_t<float, array::c_style | array::forcecast>::ensure(src);
+        if (!arr) {
+            PyErr_Clear();
+            return false;
+        }
+        if (arr.ndim() != 1 || arr.shape(0) != 3) {
+            return false;
+        }
+        value = glm::vec3(arr.at(0), arr.at(1), arr.at(2));
+        return true;
+    }
+
+    static handle cast(const glm::vec3& v, return_value_policy, handle) {
+        return array_t<float>(3, glm::value_ptr(v)).release();
+    }
+};
+} // namespace pybind11::detail
+
+using RadarArray =
+    py::array_t<float, py::array::c_style | py::array::forcecast>;
+
+PYBIND11_MODULE(rock_tracker, m) {
+    // Read-only view of a tracked rock (only what you get out of Tracker.rocks).
+    py::class_<Rock>(m, "Rock")
+        .def_readonly("position", &Rock::position)
+        .def_readonly("diameter", &Rock::diameter)
+        .def_readonly("velocity", &Rock::velocity)
+        .def_readonly("last_seen", &Rock::last_seen);
+
+    py::class_<Tracker>(m, "Tracker")
         .def(py::init<>())
-        .def_readwrite("sig_pos", &SensorSpec::sig_pos)
-        .def_readwrite("sig_rc", &SensorSpec::sig_rc)
-        .def_readwrite("sig_vr", &SensorSpec::sig_vr)
-        .def_readwrite("sig_diam_frac", &SensorSpec::sig_diam_frac);
-
-    py::class_<TrackerConfig>(m, "TrackerConfig")
-        .def(py::init<>())
-        .def_readwrite("filter", &TrackerConfig::filter)
-        .def_readwrite("alpha", &TrackerConfig::alpha)
-        .def_readwrite("beta", &TrackerConfig::beta)
-        .def_readwrite("gamma", &TrackerConfig::gamma)
-        .def_readwrite("q", &TrackerConfig::q)
-        .def_readwrite("p0", &TrackerConfig::p0)
-        .def_readwrite("v0", &TrackerConfig::v0)
-        .def_readwrite("sensor", &TrackerConfig::sensor);
-
-    py::class_<Measurement>(m, "Measurement")
-        .def(py::init<>())
-        .def_readwrite("id", &Measurement::id)
-        .def_readwrite("t", &Measurement::t)
-        .def_readwrite("x", &Measurement::x)
-        .def_readwrite("y", &Measurement::y)
-        .def_readwrite("z", &Measurement::z)
-        .def_readwrite("rc", &Measurement::rc)
-        .def_readwrite("vr", &Measurement::vr)
-        .def_readwrite("d", &Measurement::d);
-
-    py::class_<Prediction>(m, "Prediction")
-        .def_readonly("id", &Prediction::id)
-        .def_readonly("t", &Prediction::t)
-        .def_readonly("x", &Prediction::x)
-        .def_readonly("y", &Prediction::y)
-        .def_readonly("z", &Prediction::z)
-        .def_readonly("vx", &Prediction::vx)
-        .def_readonly("vy", &Prediction::vy)
-        .def_readonly("vz", &Prediction::vz)
-        .def_readonly("sx", &Prediction::sx)
-        .def_readonly("sy", &Prediction::sy)
-        .def_readonly("sz", &Prediction::sz);
-
-    py::class_<TrackerBank>(m, "TrackerBank")
-        .def(
-            py::init<TrackerConfig, int>(),
-            py::arg("config") = TrackerConfig {},
-            py::arg("threads") = 1
+        // Returns a snapshot (list of Rock copies), so it stays valid after update().
+        .def_property_readonly(
+            "rocks",
+            [](const Tracker& t) { return t.rocks; }
         )
-        .def("set_threads", &TrackerBank::set_threads)
-        .def("ids", &TrackerBank::ids)
-        .def("diameter", &TrackerBank::diameter)
-        .def("reset", &TrackerBank::reset)
         .def(
-            "ingest",
-            &TrackerBank::ingest,
-            py::call_guard<py::gil_scoped_release>()
-        )
-        .def(
-            "ingest_array",
-            [](
-                TrackerBank& b,
-                py::array_t<double, py::array::c_style | py::array::forcecast> a
-            ) {
-                if (a.ndim() != 2 || a.shape(1) != 8)
-                    throw std::invalid_argument(
-                        "expected shape (N, 8): id, t, x, y, z, rc, vr, d"
+            "update",
+            [](Tracker& self,
+               const RadarArray& radar_items,
+               const glm::vec3& shuttle_position,
+               float now) {
+                // Accepted shapes (C-contiguous float32, converted if needed):
+                //   (3, 3)     one item
+                //   (N, 3, 3)  N items
+                //   (N, 9)     N items, one flat row each
+                // Row-major 3x3 layout of one item:
+                //   [[x, y, z], [distance, range_rate, diameter], [time_stamp, pad, pad]]
+                const auto nd = radar_items.ndim();
+                const bool ok = radar_items.size() % 9 == 0
+                    && ((nd == 2 && radar_items.shape(1) == 9)
+                        || (nd == 2 && radar_items.shape(0) == 3
+                            && radar_items.shape(1) == 3)
+                        || (nd == 3 && radar_items.shape(1) == 3
+                            && radar_items.shape(2) == 3));
+                if (!ok) {
+                    throw py::value_error(
+                        "radar_items must have shape (3, 3), (N, 3, 3) or (N, 9)"
                     );
-                std::vector<Measurement> ms(a.shape(0));
-                const double* r = a.data();
-                for (py::ssize_t i = 0; i < a.shape(0); ++i, r += 8)
-                    ms[i] = {
-                        static_cast<int64_t>(r[0]),
-                        r[1],
-                        r[2],
-                        r[3],
-                        r[4],
-                        r[5],
-                        r[6],
-                        r[7]
-                    };
-                py::gil_scoped_release
-                    release; // heavy part runs without the GIL
-                return b.ingest(ms);
-            }
-        )
-        .def(
-            "predict",
-            &TrackerBank::predict,
-            py::call_guard<py::gil_scoped_release>()
-        )
-        .def(
-            "predict_all",
-            &TrackerBank::predict_all,
-            py::call_guard<py::gil_scoped_release>()
+                }
+                // Zero-copy view of the numpy buffer as RadarItems.
+                const std::span<const RadarItem> items(
+                    reinterpret_cast<const RadarItem*>(radar_items.data()),
+                    static_cast<std::size_t>(radar_items.size() / 9)
+                );
+                self.update(items, shuttle_position, now);
+            },
+            "radar_items"_a,
+            "shuttle_position"_a,
+            "now"_a
         );
 }

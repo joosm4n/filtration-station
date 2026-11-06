@@ -15,16 +15,16 @@
 namespace {
 
 struct Truth {
-    double x, y, z, vx, vy, vz, ax, ay, az;
+    float x, y, z, vx, vy, vz, ax, ay, az;
 };
 
-Truth truth_at(const Params& p, int b, double t) {
+Truth truth_at(const Params& p, int b, float t) {
     if (p.signal == SignalType::SINE) {
-        const double wx = p.omega_x, wy = p.omega_y;
-        const double sx = std::sin(wx * t + p.phase_x),
-                     cx = std::cos(wx * t + p.phase_x);
-        const double sy = std::sin(wy * t + p.phase_y),
-                     cy = std::cos(wy * t + p.phase_y);
+        const float wx = p.omega_x, wy = p.omega_y;
+        const float sx = std::sin(wx * t + p.phase_x),
+                    cx = std::cos(wx * t + p.phase_x);
+        const float sy = std::sin(wy * t + p.phase_y),
+                    cy = std::cos(wy * t + p.phase_y);
         return {
             p.amp_x * sx,
             p.amp_y * sy,
@@ -39,9 +39,9 @@ Truth truth_at(const Params& p, int b, double t) {
     }
     const Body& B = p.bodies[b];
     return {
-        B.x0 + B.vx * t + 0.5 * B.ax * t * t,
-        B.y0 + B.vy * t + 0.5 * B.ay * t * t,
-        B.z0 + B.vz * t + 0.5 * B.az * t * t,
+        B.x0 + B.vx * t + 0.5f * B.ax * t * t,
+        B.y0 + B.vy * t + 0.5f * B.ay * t * t,
+        B.z0 + B.vz * t + 0.5f * B.az * t * t,
         B.vx + B.ax * t,
         B.vy + B.ay * t,
         B.vz + B.az * t,
@@ -89,13 +89,13 @@ void run_body(const Params& p, int b, int steps, Track& k) {
           &k.m_rc, &k.m_vr, &k.m_d, &k.t_rc, &k.t_vr, &k.t_d, &k.err})
         v->reserve(steps);
 
-    std::vector<double> se_x(K_SWEEP_POINTS, 0.0), se_y(K_SWEEP_POINTS, 0.0),
+    std::vector<float> se_x(K_SWEEP_POINTS, 0.0), se_y(K_SWEEP_POINTS, 0.0),
         se_z(K_SWEEP_POINTS, 0.0);
-    std::vector<double> sg_x(K_SWEEP_POINTS, 0.0);
+    std::vector<float> sg_x(K_SWEEP_POINTS, 0.0);
     int scored = 0;
 
     for (int i = 0; i < steps; ++i) {
-        const double t = (i + 1) * p.dt;
+        const float t = (float)(i + 1) * p.dt;
 
         k.fx->predict(p.dt);
         k.fy->predict(p.dt);
@@ -112,41 +112,41 @@ void run_body(const Params& p, int b, int steps, Track& k) {
         k.tay.push_back(a.ay);
         k.taz.push_back(a.az);
 
-        const double sp = p.use_sensor ? p.sig_pos : p.noise;
-        std::normal_distribution<double> gp(0.0, std::max(sp, 1e-9));
-        std::normal_distribution<double> g_rc(
+        const float sp = p.use_sensor ? p.sig_pos : p.noise;
+        std::normal_distribution<float> gp(0.0f, std::max(sp, 1e-9f));
+        std::normal_distribution<float> g_rc(
             0.0,
-            std::max<double>(p.sig_rc, 1e-9)
+            std::max<float>(p.sig_rc, 1e-9f)
         );
-        std::normal_distribution<double> g_vr(
+        std::normal_distribution<float> g_vr(
             0.0,
-            std::max<double>(p.sig_vr, 1e-9)
+            std::max<float>(p.sig_vr, 1e-9f)
         );
-        std::normal_distribution<double> g_d(
+        std::normal_distribution<float> g_d(
             0.0,
-            std::max<double>(p.sig_diam_frac, 1e-9)
+            std::max<float>(p.sig_diam_frac, 1e-9f)
         );
 
-        double zx = a.x, zy = a.y, zz = a.z;
+        float zx = a.x, zy = a.y, zz = a.z;
         if (sp > 0.0f) {
             zx += gp(rng);
             zy += gp(rng);
             zz += gp(rng);
         }
 
-        const double D =
+        const float D =
             (p.signal == SignalType::BODIES) ? p.bodies[b].diameter : 0.0;
-        const double rho =
-            std::max(std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z), 1e-9);
-        const double rc = rho - 0.5 * D;
-        const double vr = (a.x * a.vx + a.y * a.vy + a.z * a.vz) / rho;
+        const float rho =
+            std::max(std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z), 1e-9f);
+        const float rc = rho - 0.5f * D;
+        const float vr = (a.x * a.vx + a.y * a.vy + a.z * a.vz) / rho;
 
         k.t_rc.push_back(rc);
         k.t_vr.push_back(vr);
         k.t_d.push_back(D);
         k.m_rc.push_back(rc + g_rc(rng));
         k.m_vr.push_back(vr + g_vr(rng));
-        k.m_d.push_back(D * (1.0 + g_d(rng)));
+        k.m_d.push_back(D * (1.0f + g_d(rng)));
 
         k.zx.push_back(zx);
         k.zy.push_back(zy);
@@ -155,8 +155,8 @@ void run_body(const Params& p, int b, int steps, Track& k) {
         k.fy->update(p.dt, k.fy->innovation(zy));
         k.fz->update(p.dt, k.fz->innovation(zz));
 
-        const double h = p.target > 0.0f ? std::max(0.0, p.target - t)
-                                         : static_cast<double>(p.horizon);
+        const float h = p.target > 0.0f ? std::max(0.0f, p.target - t)
+                                        : static_cast<float>(p.horizon);
 
         const Forecast fx = k.fx->forecast(h);
         const Forecast fy = k.fy->forecast(h);
@@ -172,11 +172,12 @@ void run_body(const Params& p, int b, int steps, Track& k) {
         if (t >= p.warmup) {
             ++scored;
             for (int j = 0; j < K_SWEEP_POINTS; ++j) {
-                const double h2 = p.max_horizon * (j + 1) / K_SWEEP_POINTS;
+                const float h2 =
+                    p.max_horizon * (float)(j + 1) / K_SWEEP_POINTS;
                 const Forecast ax = k.fx->forecast(h2), ay = k.fy->forecast(h2),
                                az = k.fz->forecast(h2);
                 const Truth f = truth_at(p, b, t + h2);
-                const double ex = ax.x - f.x, ey = ay.x - f.y, ez = az.x - f.z;
+                const float ex = ax.x - f.x, ey = ay.x - f.y, ez = az.x - f.z;
                 se_x[j] += ex * ex;
                 se_y[j] += ey * ey;
                 se_z[j] += ez * ez;
@@ -192,19 +193,19 @@ void run_body(const Params& p, int b, int steps, Track& k) {
         k.sig_x.assign(K_SWEEP_POINTS, 0.0);
     if (scored > 0) {
         for (int j = 0; j < K_SWEEP_POINTS; ++j) {
-            k.rms_x[j] = std::sqrt(se_x[j] / scored);
-            k.rms_y[j] = std::sqrt(se_y[j] / scored);
+            k.rms_x[j] = std::sqrt(se_x[j] / (float)scored);
+            k.rms_y[j] = std::sqrt(se_y[j] / (float)scored);
             if (has_sigma)
-                k.sig_x[j] = sg_x[j] / scored;
+                k.sig_x[j] = sg_x[j] / (float)scored;
         }
     }
 
-    const double t_end = steps * p.dt;
+    const float t_end = (float)steps * p.dt;
     k.fut_x = k.px.back();
     k.fut_y = k.py.back();
     k.fut_z = k.pz.back();
-    const double h_end = p.target > 0.0f ? std::max(0.0, p.target - t_end)
-                                         : static_cast<double>(p.horizon);
+    const float h_end = p.target > 0.0f ? std::max(0.0f, p.target - t_end)
+                                        : static_cast<float>(p.horizon);
     const Truth f = truth_at(p, b, t_end + h_end);
     k.fut_tx = f.x;
     k.fut_ty = f.y;
@@ -214,7 +215,7 @@ void run_body(const Params& p, int b, int steps, Track& k) {
     k.tx_ext = k.tx;
     k.ty_ext = k.ty;
     k.tz_ext = k.tz;
-    for (double te = t_end + p.dt; te < t_end + h_end - 1e-9; te += p.dt) {
+    for (float te = t_end + p.dt; te < t_end + h_end - 1e-9f; te += p.dt) {
         const Truth e = truth_at(p, b, te);
         k.tx_ext.push_back(e.x);
         k.ty_ext.push_back(e.y);
@@ -227,42 +228,42 @@ void run_body(const Params& p, int b, int steps, Track& k) {
     }
 }
 
-glm::dmat3 make_F(double dt) {
-    const double dt2 = dt * dt;
-    return glm::dmat3 {
-        glm::dvec3 {1.0, 0.0, 0.0},
-        glm::dvec3 {dt, 1.0, 0.0},
-        glm::dvec3 {0.5 * dt2, dt, 1.0}
+glm::mat3 make_F(float dt) {
+    const float dt2 = dt * dt;
+    return glm::mat3 {
+        glm::vec3 {1.0f, 0.0f, 0.0f},
+        glm::vec3 {dt, 1.0f, 0.0f},
+        glm::vec3 {0.5f * dt2, dt, 1.0f}
     };
 }
 
-glm::dmat3 make_Q(double dt, double q) {
-    const double dt2 = dt * dt, dt3 = dt2 * dt, dt4 = dt3 * dt, dt5 = dt4 * dt;
+glm::mat3 make_Q(float dt, float q) {
+    const float dt2 = dt * dt, dt3 = dt2 * dt, dt4 = dt3 * dt, dt5 = dt4 * dt;
     return q
-        * glm::dmat3 {
-            glm::dvec3 {dt5 / 20.0, dt4 / 8.0, dt3 / 6.0},
-            glm::dvec3 {dt4 / 8.0, dt3 / 3.0, dt2 / 2.0},
-            glm::dvec3 {dt3 / 6.0, dt2 / 2.0, dt}
+        * glm::mat3 {
+            glm::vec3 {dt5 / 20.0f, dt4 / 8.0f, dt3 / 6.0f},
+            glm::vec3 {dt4 / 8.0f, dt3 / 3.0f, dt2 / 2.0f},
+            glm::vec3 {dt3 / 6.0f, dt2 / 2.0f, dt}
         };
 }
 } // namespace
 
-void AbgFilter::predict(double dt) {
-    x_k.push_back(x_k.back() + v_k.back() * dt + 0.5 * a_k.back() * dt * dt);
+void AbgFilter::predict(float dt) {
+    x_k.push_back(x_k.back() + v_k.back() * dt + 0.5f * a_k.back() * dt * dt);
     v_k.push_back(v_k.back() + a_k.back() * dt);
     a_k.push_back(a_k.back());
 }
 
-void AbgFilter::update(double dt, double r) {
+void AbgFilter::update(float dt, float r) {
     x_k.back() += alpha * r;
     v_k.back() += beta * r / dt;
     a_k.back() += (2 * gamma * r) / (dt * dt);
 }
 
-void KalmanFilter::predict(double dt) {
-    const glm::dmat3 F = make_F(dt);
+void KalmanFilter::predict(float dt) {
+    const glm::mat3 F = make_F(dt);
 
-    const glm::dvec3 s = F * glm::dvec3 {x_k.back(), v_k.back(), a_k.back()};
+    const glm::vec3 s = F * glm::vec3 {x_k.back(), v_k.back(), a_k.back()};
     x_k.push_back(s.x);
     v_k.push_back(s.y);
     a_k.push_back(s.z);
@@ -270,40 +271,43 @@ void KalmanFilter::predict(double dt) {
     P = F * P * glm::transpose(F) + make_Q(dt, q);
 }
 
-void KalmanFilter::update(double dt, double r) {
-    const double S = P[0][0] + R; // innovation variance (H P H^T + R)
-    const glm::dvec3 K = P[0] / S; // Kalman gain: column 0 of P (= P H^T)
+void KalmanFilter::update(float /*dt*/, float r) {
+    const float S = P[0][0] + R; // innovation variance (H P H^T + R)
+    const glm::vec3 K = P[0] / S; // Kalman gain: column 0 of P (= P H^T)
 
-    const glm::dvec3 s =
-        glm::dvec3 {x_k.back(), v_k.back(), a_k.back()} + K * r;
+    const glm::vec3 s = glm::vec3 {x_k.back(), v_k.back(), a_k.back()} + K * r;
     x_k.back() = s.x;
     v_k.back() = s.y;
     a_k.back() = s.z;
 
     // P = (I - K H) P, where K H has K as its first column and zeros elsewhere
-    glm::dmat3 KH {0.0};
+    glm::mat3 KH {0.0f};
     KH[0] = K;
-    const glm::dmat3 Pn = (glm::dmat3 {1.0} - KH) * P;
+    const glm::mat3 Pn = (glm::mat3 {1.0f} - KH) * P;
 
     // symmetrise to limit numerical drift
-    P = 0.5 * (Pn + glm::transpose(Pn));
+    P = 0.5f * (Pn + glm::transpose(Pn));
 }
 
-Forecast KalmanFilter::forecast(double h) const {
-    const glm::dmat3 F = make_F(h);
-    const glm::dvec3 s = F * glm::dvec3 {x_k.back(), v_k.back(), a_k.back()};
-    const glm::dmat3 Pf = F * P * glm::transpose(F) + make_Q(h, q);
+Forecast KalmanFilter::forecast(float h) const {
+    const glm::mat3 F = make_F(h);
+    const glm::vec3 s = F * glm::vec3 {x_k.back(), v_k.back(), a_k.back()};
+    const glm::mat3 Pf = F * P * glm::transpose(F) + make_Q(h, q);
     return {s.x, s.y, s.z, Pf[0][0]};
 }
 
-void PolyFitFilter::predict(double dt) {}
+void PolyFitFilter::predict(float /*dt*/) {}
 
-void PolyFitFilter::update(double dt, double r) {
+void PolyFitFilter::update(float dt, float r) {
     this->x_k.push_back(this->x_k.back() + r);
+    this->avg_vel =
+        (float)((double)(this->avg_vel * ((double)(this->v_k.size() - 1))
+                         + (double)r)
+                / (double)v_k.size());
     this->v_k.push_back(r);
     this->a_k.push_back(0.0);
 
-    double last_time = 0.0;
+    float last_time = 0.0;
     if (!this->times.empty()) {
         last_time = this->times.back();
     }
@@ -311,17 +315,17 @@ void PolyFitFilter::update(double dt, double r) {
     this->pf = poly::polyfit(this->times, this->x_k);
 }
 
-Forecast PolyFitFilter::forecast(double h) const {
-    const auto t = times.back() + h;
-    const auto x = poly::eval(this->pf, t);
-    return {x, this->v_k.back(), 0.0, 0.0};
+Forecast PolyFitFilter::forecast(float h) const {
+    const auto x = this->pf.eval(times.back() + h);
+    // auto v = this->avg_vel;
+    auto v = 0.0f;
+    return {x, v, 0.0f, 0.0f};
 }
 
 // x0 = initial position estimate (we start on the actual signal's value at t = 0)
-std::unique_ptr<FilterBase>
-FilterBase::make_filter(const Params& p, double x0) {
-    const double v0 = static_cast<double>(p.v0);
-    const double a0 = 0.0;
+std::unique_ptr<FilterBase> FilterBase::make_filter(const Params& p, float x0) {
+    const float v0 = static_cast<float>(p.v0);
+    const float a0 = 0.0;
     switch (p.filter) {
         case FilterType::KALMAN:
             return std::make_unique<KalmanFilter>(
@@ -347,13 +351,13 @@ FilterBase::make_filter(const Params& p, double x0) {
     }
 }
 
-Forecast AbgFilter::forecast(double h) const {
-    const double x = x_k.back(), v = v_k.back(), a = a_k.back();
+Forecast AbgFilter::forecast(float h) const {
+    const float x = x_k.back(), v = v_k.back(), a = a_k.back();
     return {
-        x + v * h + 0.5 * a * h * h,
+        x + v * h + 0.5f * a * h * h,
         v + a * h,
         a,
-        std::numeric_limits<double>::quiet_NaN()
+        std::numeric_limits<float>::quiet_NaN()
     };
 }
 
@@ -376,31 +380,31 @@ Result run_sim(const Params& p) {
 
     // combine across bodies (cheap, so serial)
     res.mean_err.assign(steps, 0.0);
-    res.run_avg.assign(steps, std::numeric_limits<double>::quiet_NaN());
-    double acc = 0.0;
+    res.run_avg.assign(steps, std::numeric_limits<float>::quiet_NaN());
+    float acc = 0.0;
     int cnt = 0;
     for (int i = 0; i < steps; ++i) {
-        double s = 0.0;
+        float s = 0.0;
         for (const Track& k : res.tracks)
             s += k.err[i];
-        res.mean_err[i] = s / nb;
-        if ((i + 1) * p.dt >= p.warmup) {
+        res.mean_err[i] = s / (float)nb;
+        if ((float)(i + 1) * p.dt >= p.warmup) {
             acc += res.mean_err[i];
             ++cnt;
-            res.run_avg[i] = acc / cnt;
+            res.run_avg[i] = acc / (float)cnt;
         }
     }
-    res.mean_err_scored = cnt > 0 ? acc / cnt : 0.0;
+    res.mean_err_scored = cnt > 0 ? acc / (float)cnt : 0.0;
 
     res.sweep_h.resize(K_SWEEP_POINTS);
     for (int j = 0; j < K_SWEEP_POINTS; ++j)
-        res.sweep_h[j] = p.max_horizon * (j + 1) / K_SWEEP_POINTS;
+        res.sweep_h[j] = p.max_horizon * (float)(j + 1) / K_SWEEP_POINTS;
 
     res.t.resize(static_cast<std::size_t>(steps) + 1);
     for (std::size_t i = 0; i < res.t.size(); ++i)
-        res.t[i] = static_cast<double>(i) * p.dt;
+        res.t[i] = static_cast<float>(i) * p.dt;
 
-    res.compute_ms = std::chrono::duration<double, std::milli>(
+    res.compute_ms = std::chrono::duration<float, std::milli>(
                          std::chrono::steady_clock::now() - t_start
     )
                          .count();

@@ -46,6 +46,9 @@ struct AppState {
     std::vector<int>
         order {PLOT_XY, PLOT_POS, PLOT_VEL, PLOT_ACC, PLOT_ERR, PLOT_AVG};
 
+    float window_width = 1600.0f;
+    float window_height = 900.0f;
+
     AppState() {
         std::fill_n(show_body, Body::MAX_BODIES, true);
     }
@@ -55,6 +58,8 @@ struct AppState {
 template<class F>
 static void visit_fields(AppState& s, F&& f) {
     Params& p = s.p;
+    f("window_width", s.window_width);
+    f("window_height", s.window_height);
     f("filter", reinterpret_cast<int&>(p.filter));
     f("signal", reinterpret_cast<int&>(p.signal));
     f("n_bodies", p.n_bodies);
@@ -214,6 +219,7 @@ static void settings_line(
         s.order = o;
         return;
     }
+
     visit_fields(s, [&](const char* k, auto& v) {
         if (key == k)
             get(val, v);
@@ -260,8 +266,8 @@ struct Decimated {
 // xs must be monotonic increasing. Keeps min & max of each pixel bucket,
 // in original order, so the drawn line looks the same as the full one.
 static void decimate_minmax(
-    const double* xs,
-    const double* ys,
+    const float* xs,
+    const float* ys,
     int n,
     double x_min,
     double x_max,

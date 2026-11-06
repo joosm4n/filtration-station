@@ -33,11 +33,12 @@ struct Body {
     float z0 = 0, vz = 0, az = 0;
     float diameter = 5000.0f; // true average diameter [m]
 
-    static constexpr int MAX_BODIES = 100;
-    static constexpr double RADIUS = 11100.0f;
-    static constexpr double MU = 707500.0f;
-    static constexpr double VERT_OFFSET = 500.0f;
-    static constexpr double PHOBOS_GRAVITY = 0.0057;
+    static constexpr int MAX_BODIES = 500;
+
+    static constexpr float RADIUS = 11100.0f;
+    static constexpr float MU = 707500.0f;
+    static constexpr float VERT_OFFSET = 500.0f;
+    static constexpr float PHOBOS_GRAVITY = 0.0057f;
     static constexpr glm::vec3 PHOBOS_CENTRE = glm::vec3 {0.0f, 0.0f, 0.0f};
     static constexpr glm::vec3 NORTH = {RADIUS, 0.0f, 0.0f};
     static constexpr glm::vec3 WEST = {0.0f, RADIUS, 0.0f};
@@ -45,30 +46,26 @@ struct Body {
     static constexpr glm::vec3 SHUTTLE_LOC = {0.0f, 0.0f, RADIUS};
 
     struct ScalingStats {
-        double scaleMin, scaleMax, radarDiameter;
+        float scaleMin, scaleMax, radarDiameter;
     };
 
     static constexpr std::array<ScalingStats, 3> SCALES = {
-        ScalingStats {40.0, 1000.0, 0.08},
-        ScalingStats {20.0, 800.0, 0.05},
-        ScalingStats {10, 400, 0.01}
+        ScalingStats {40.0f, 1000.0f, 0.08f},
+        ScalingStats {20.0f, 800.0f, 0.05f},
+        ScalingStats {10.0f, 400.0f, 0.01f}
     };
 
     struct NorthWestUp {
         glm::vec3 north, west, up;
     };
 
-    static auto clampFloat(double val, double outMin, double outMax) -> double {
+    static auto clampFloat(float val, float outMin, float outMax) -> float {
         return glm::min(glm::max(val, outMin), outMax);
     }
 
-    static auto remapFloat(
-        double val,
-        double inMin,
-        double inMax,
-        double outMin,
-        double outMax
-    ) -> double {
+    static auto
+    remapFloat(float val, float inMin, float inMax, float outMin, float outMax)
+        -> float {
         return clampFloat(
             outMin + (outMax - outMin) * (val - inMin) / (inMax - inMin),
             outMin,
@@ -95,7 +92,7 @@ struct Body {
         );
     }
 
-    static auto toNWU(auto loc, double rad) -> NorthWestUp {
+    static auto toNWU(auto loc) -> NorthWestUp {
         auto north = glm::normalize(NORTH - loc);
         auto up = -glm::normalize(PHOBOS_CENTRE - loc);
         auto west = glm::cross(up, north);
@@ -111,15 +108,20 @@ struct Body {
         constexpr auto locMax = SHUTTLE_LOC + SPREAD_M;
 
         std::mt19937 gen(seed);
-        std::uniform_real_distribution<> dis(0.0, 1.0);
+        std::uniform_real_distribution<float> dis(0.0, 1.0);
         auto randVec = [](auto dis, auto gen) {
             return glm::vec3 {dis(gen), dis(gen), dis(gen)};
         };
         auto loc_random = randVec(dis, gen);
         auto vel_random = dis(gen);
         auto size_random = dis(gen);
-        auto azimuth =
-            remapFloat(dis(gen), 0.0, 1.0, 0.0, 2.0 * glm::pi<float>());
+        auto azimuth = remapFloat(
+            static_cast<float>(dis(gen)),
+            0.0,
+            1.0,
+            0.0,
+            2.0 * glm::pi<float>()
+        );
 
         auto loc = remapVector(
             loc_random,
@@ -128,15 +130,15 @@ struct Body {
             locMin,
             locMax
         );
-        auto NWU = toNWU(loc, RADIUS);
+        auto NWU = toNWU(loc);
 
         auto vel_mag_max = std::sqrt(MU / RADIUS);
         auto vel_mag = remapFloat(
             vel_random,
-            0.0,
-            1.0,
-            0.05 * vel_mag_max,
-            0.1 * vel_mag_max
+            0.0f,
+            1.0f,
+            0.05f * vel_mag_max,
+            0.1f * vel_mag_max
         );
         auto vel = (float)vel_mag * (NWU.north * (float)glm::cos(azimuth))
             - NWU.west * (float)glm::sin(azimuth);
@@ -249,62 +251,59 @@ inline void clamp_params(Params& p) {
 inline constexpr int K_SWEEP_POINTS = 60;
 
 struct Forecast {
-    double x, v, a;
-    double var_x; // variance of the predicted position
+    float x, v, a;
+    float var_x; // variance of the predicted position
 };
 
 struct FilterBase {
-    std::vector<double> x_k; // position estimates
-    std::vector<double> v_k; // velocity estimates
-    std::vector<double> a_k; // acceleration estimates
+    std::vector<float> x_k; // position estimates
+    std::vector<float> v_k; // velocity estimates
+    std::vector<float> a_k; // acceleration estimates
 
     virtual ~FilterBase() = default;
 
     // Advance the state by dt and push the predicted state onto the history.
-    virtual void predict(double dt) = 0;
+    virtual void predict(float dt) = 0;
     // Correct the latest (predicted) state with the innovation r = measurement - prediction.
-    virtual void update(double dt, double r) = 0;
+    virtual void update(float dt, float r) = 0;
 
-    double innovation(double x_m) const {
+    float innovation(float x_m) const {
         return x_m - x_k.back();
     }
 
     // Look ahead by `horizon` seconds (>= 0) from the latest state without modifying it.
-    virtual Forecast forecast(double horizon) const = 0;
+    virtual Forecast forecast(float horizon) const = 0;
 
-    double predict_position(double horizon) const {
+    float predict_position(float horizon) const {
         return forecast(horizon).x;
     }
 
-    static std::unique_ptr<FilterBase> make_filter(const Params& p, double x0);
+    static std::unique_ptr<FilterBase> make_filter(const Params& p, float x0);
 
   protected:
-    FilterBase(double x0, double v0, double a0) :
-        x_k {x0},
-        v_k {v0},
-        a_k {a0} {}
+    FilterBase(float x0, float v0, float a0) : x_k {x0}, v_k {v0}, a_k {a0} {}
 };
 
 // Fixed-gain alpha-beta-gamma filter.
 struct AbgFilter final: FilterBase {
-    double alpha, beta, gamma;
+    float alpha, beta, gamma;
 
     AbgFilter(
-        double x0,
-        double v0,
-        double a0,
-        double alpha,
-        double beta,
-        double gamma
+        float x0,
+        float v0,
+        float a0,
+        float alpha,
+        float beta,
+        float gamma
     ) :
         FilterBase(x0, v0, a0),
         alpha(alpha),
         beta(beta),
         gamma(gamma) {}
 
-    void predict(double dt) override;
-    void update(double dt, double r) override;
-    Forecast forecast(double horizon) const override;
+    void predict(float dt) override;
+    void update(float dt, float r) override;
+    Forecast forecast(float horizon) const override;
 };
 
 // Kalman filter, constant-acceleration model, state [x v a], position measured (H = [1 0 0]).
@@ -313,38 +312,34 @@ struct AbgFilter final: FilterBase {
 // Note: glm matrices are column-major, so M[col][row]. The matrices below are written
 // column by column (F is the only non-symmetric one, so its layout matters).
 struct KalmanFilter final: FilterBase {
-    double q; // process noise (jerk) spectral density
-    double R; // measurement variance
-    glm::dmat3 P; // state covariance
+    float q; // process noise (jerk) spectral density
+    float R; // measurement variance
+    glm::mat3 P; // state covariance
 
     // p0 = initial variance of every state component (larger = trust early measurements more)
-    KalmanFilter(
-        double x0,
-        double v0,
-        double a0,
-        double q,
-        double r_std,
-        double p0
-    ) :
+    KalmanFilter(float x0, float v0, float a0, float q, float r_std, float p0) :
         FilterBase(x0, v0, a0),
         q(q),
         R(r_std * r_std),
-        P(p0) {} // glm::dmat3(scalar) builds a diagonal matrix
+        P(p0) {} // glm::mat3(scalar) builds a diagonal matrix
 
-    void predict(double dt) override;
-    void update(double dt, double r) override;
-    Forecast forecast(double horizon) const override;
+    void predict(float dt) override;
+    void update(float dt, float r) override;
+    Forecast forecast(float horizon) const override;
 };
 
 struct PolyFitFilter final: FilterBase {
     poly::Polynomial pf = {};
-    std::vector<double> times = {};
+    std::vector<float> times = {};
+    float avg_vel = 0.0;
 
-    PolyFitFilter(double x0, double v0, double a0) : FilterBase(x0, v0, a0), times{0.0} {}
+    PolyFitFilter(float x0, float v0, float a0) :
+        FilterBase(x0, v0, a0),
+        times {0.0} {}
 
-    void predict(double dt) override;
-    void update(double dt, double r) override;
-    Forecast forecast(double horizon) const override;
+    void predict(float dt) override;
+    void update(float dt, float r) override;
+    Forecast forecast(float horizon) const override;
 };
 
 struct Track {
@@ -352,40 +347,40 @@ struct Track {
     std::unique_ptr<FilterBase> fx, fy, fz;
 
     // noisy measurements (line up with t[1:])
-    std::vector<double> zx, zy, zz;
+    std::vector<float> zx, zy, zz;
     // true position
-    std::vector<double> tx, ty, tz;
+    std::vector<float> tx, ty, tz;
     // true x-y path extended past the end of the run, up to the look-ahead time
-    std::vector<double> tx_ext, ty_ext, tz_ext;
+    std::vector<float> tx_ext, ty_ext, tz_ext;
     // true velocity / acceleration
-    std::vector<double> tvx, tvy, tvz, tax, tay, taz;
+    std::vector<float> tvx, tvy, tvz, tax, tay, taz;
 
     // forecast made at each step (pt = t + horizon)
-    std::vector<double> pt, px, py, pz;
+    std::vector<float> pt, px, py, pz;
     // error vs look-ahead (sig_x empty for ABG)
-    std::vector<double> rms_x, rms_y, rms_z, sig_x;
+    std::vector<float> rms_x, rms_y, rms_z, sig_x;
     // where this body is predicted to be, `horizon` after the end of the run, and where it really is
-    double fut_x = 0, fut_y = 0, fut_z = 0;
-    double fut_tx = 0, fut_ty = 0, fut_tz = 0;
+    float fut_x = 0, fut_y = 0, fut_z = 0;
+    float fut_tx = 0, fut_ty = 0, fut_tz = 0;
     // distance between forecast made at step i and true position at t + horizon
-    std::vector<double> err;
+    std::vector<float> err;
 
     // measured r_c, v_r, d
-    std::vector<double> m_rc, m_vr, m_d;
+    std::vector<float> m_rc, m_vr, m_d;
     // true values
-    std::vector<double> t_rc, t_vr, t_d;
+    std::vector<float> t_rc, t_vr, t_d;
 };
 
 struct Result {
     std::vector<Track> tracks;
-    std::vector<double> t; // time of each state (size = steps + 1)
-    std::vector<double> sweep_h; // look-ahead axis for the error plot
-    std::vector<double>
+    std::vector<float> t; // time of each state (size = steps + 1)
+    std::vector<float> sweep_h; // look-ahead axis for the error plot
+    std::vector<float>
         mean_err; // err averaged over all bodies, per step (lines up with t[1:])
-    std::vector<double>
+    std::vector<float>
         run_avg; // running mean of mean_err from warm-up onwards (NaN before)
-    double mean_err_scored = 0.0; // run_avg's final value
-    double compute_ms = 0.0; // wall-clock time run_sim took
+    float mean_err_scored = 0.0; // run_avg's final value
+    float compute_ms = 0.0; // wall-clock time run_sim took
     Params params;
 };
 

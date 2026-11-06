@@ -9,13 +9,12 @@
 #include "simulation_worker.hpp"
 #include "viewer_base.hpp"
 
+#include <GLFW/glfw3.h>
 #include <imgui_internal.h>
 #include <implot.h>
 
 #include <algorithm>
 #include <cmath>
-#include <condition_variable>
-#include <mutex>
 #include <optional>
 #include <thread>
 
@@ -46,8 +45,8 @@ static void draw_line(
 
 static void draw_line_lod(
     const char* label,
-    const double* xs,
-    const double* ys,
+    const float* xs,
+    const float* ys,
     int n,
     const ImVec4& col,
     bool dots,
@@ -72,8 +71,8 @@ static void draw_line_lod(
 
 static void draw_crosses(
     const char* label,
-    const double* xs,
-    const double* ys,
+    const float* xs,
+    const float* ys,
     int n,
     const ImVec4& col
 ) {
@@ -95,8 +94,8 @@ static void draw_crosses(
 // where SetNextAxesToFit is active so the auto-fit sees every point.
 static void draw_crosses_lod(
     const char* label,
-    const double* xs,
-    const double* ys,
+    const float* xs,
+    const float* ys,
     int n,
     const ImVec4& col,
     bool fitting,
@@ -113,23 +112,24 @@ static void draw_crosses_lod(
 
     const ImPlotRect lim = ImPlot::GetPlotLimits();
     const ImVec2 sz = ImPlot::GetPlotSize();
-    const double w = lim.X.Max - lim.X.Min, h = lim.Y.Max - lim.Y.Min;
+    const float w = (float)(lim.X.Max - lim.X.Min),
+                h = (float)(lim.Y.Max - lim.Y.Min);
     if (w <= 0.0 || h <= 0.0 || sz.x <= 0.0f || sz.y <= 0.0f) {
         draw_crosses(label, xs, ys, n, col);
         return;
     }
-    const double sx = sz.x / w, sy = sz.y / h;
+    const float sx = sz.x / w, sy = sz.y / h;
 
-    static thread_local std::vector<double> bx, by;
+    static thread_local std::vector<float> bx, by;
     static thread_local std::unordered_set<uint64_t> seen;
     bx.clear();
     by.clear();
     seen.clear();
 
-    const double margin = cell_px * 2; // keep crosses that straddle the edge
+    const float margin = cell_px * 2; // keep crosses that straddle the edge
     for (int i = 0; i < n; ++i) {
-        const double px = (xs[i] - lim.X.Min) * sx;
-        const double py = (ys[i] - lim.Y.Min) * sy;
+        const float px = (float)(xs[i] - lim.X.Min) * sx;
+        const float py = (float)(ys[i] - lim.Y.Min) * sy;
         if (px < -margin || px > sz.x + margin || py < -margin
             || py > sz.y + margin)
             continue;
@@ -173,8 +173,8 @@ static ImVec4 faded(ImVec4 c) {
 
 static void draw_marker(
     const char* label,
-    const double* x,
-    const double* y,
+    const float* x,
+    const float* y,
     const ImVec4& col,
     bool filled
 ) {
@@ -187,6 +187,7 @@ static void draw_marker(
 }
 
 int main() {
+    printf("-- Starting Filtration Station -- \n");
     AppState st;
     GenericViewer viewer(
         {"Filter viewer",
@@ -559,7 +560,7 @@ int main() {
                     std::min(k0.fx->x_k.size(), k0.fy->x_k.size())
                 );
                 const int m = static_cast<int>(k0.zx.size());
-                const double* t = result.t.data();
+                const float* t = result.t.data();
 
                 auto draw_plot = [&](int id) {
                     const bool fit = refit || !was_vis[id];
@@ -930,8 +931,10 @@ int main() {
                     const int rows = (cnt + cols - 1) / cols;
                     const ImVec2 avail = ImGui::GetContentRegionAvail();
                     const ImVec2 sp = ImGui::GetStyle().ItemSpacing;
-                    const float cw = (avail.x - sp.x * (cols - 1)) / cols;
-                    const float ch = (avail.y - sp.y * (rows - 1)) / rows;
+                    const float cw =
+                        (avail.x - sp.x * (float)(cols - 1)) / (float)cols;
+                    const float ch =
+                        (avail.y - sp.y * (float)(rows - 1)) / (float)rows;
                     const ImVec2 origin = ImGui::GetCursorPos();
 
                     int swap_a = -1, swap_b = -1;
@@ -941,8 +944,8 @@ int main() {
                         const bool spans =
                             cols == 2 && k == cnt - 1 && c == 0; // odd one out
                         ImGui::SetCursorPos(
-                            {origin.x + c * (cw + sp.x),
-                             origin.y + r * (ch + sp.y)}
+                            {origin.x + (float)c * (cw + sp.x),
+                             origin.y + (float)r * (ch + sp.y)}
                         );
 
                         ImGui::PushID(id);

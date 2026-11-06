@@ -3,7 +3,7 @@ set(TARGET_NAME filtration-station)
 set(CORE_NAME ${TARGET_NAME}-core)
 project(${TARGET_NAME} VERSION 1.0 LANGUAGES CXX)
 
-option(STP_BUILD_GUI "Build the ImGui filter viewer" OFF)
+# option(STP_BUILD_GUI "Build the ImGui filter viewer" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,10 +19,10 @@ find_package(Threads REQUIRED)
 
 add_subdirectory(external/glm)
 
-if(STP_BUILD_GUI)
-    add_subdirectory(external/imgui)
-    add_subdirectory(external/implot)
-endif()
+# if(STP_BUILD_GUI)
+#     add_subdirectory(external/imgui)
+#     add_subdirectory(external/implot)
+# endif()
 
 set(PYBIND11_FINDPYTHON ON)
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/pybind11/CMakeLists.txt")
@@ -31,36 +31,35 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/pybind11/CMakeLists.txt")
 endif()
 add_subdirectory(external/pybind11)
 
-
-set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
-file(GLOB_RECURSE SOURCE_FILES ${SOURCE_DIR}/*.cpp)
-list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/replay_viewer\\.cpp$")
-list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/physics_viewer\\.cpp$")
-list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/physics\\.cpp$")
+# set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# file(GLOB_RECURSE SOURCE_FILES ${SOURCE_DIR}/*.cpp)
+# list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/replay_viewer\\.cpp$")
+# list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/physics_viewer\\.cpp$")
+# list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/physics\\.cpp$")
 
 # --- core library: filters + tracker (no GUI, no Python) -----------------------------
-add_library(${CORE_NAME} STATIC
-  src/filters.cpp
-  src/physics.cpp
-)
-target_include_directories(${CORE_NAME} PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    external/pybind11/include
-)
-target_link_libraries(${CORE_NAME} PUBLIC glm::glm Threads::Threads)
+# add_library(${CORE_NAME} STATIC
+#   src/filters.cpp
+#   src/physics.cpp
+# )
+# target_include_directories(${CORE_NAME} PUBLIC
+#     ${CMAKE_CURRENT_SOURCE_DIR}
+#     external/pybind11/include
+# )
+# target_link_libraries(${CORE_NAME} PUBLIC glm::glm Threads::Threads)
 
 pybind11_add_module(rock_tracker src/bindings.cc)
-target_link_libraries(rock_tracker PRIVATE ${CORE_NAME})
+# target_link_libraries(rock_tracker PRIVATE ${CORE_NAME})
 
-if(STP_BUILD_GUI)
-    add_executable(${TARGET_NAME} ${SOURCE_FILES})
-    target_link_libraries(${TARGET_NAME} PUBLIC imgui implot ${CORE_NAME})
-
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/replay_viewer.cpp")
-        add_executable(stp-replay-viewer src/replay_viewer.cpp)
-        target_link_libraries(stp-replay-viewer PUBLIC imgui implot ${CORE_NAME})
-    endif()
-
-    add_executable(stp-physics-viewer src/physics_viewer.cpp)
-    target_link_libraries(stp-physics-viewer PUBLIC imgui implot ${CORE_NAME})
-endif()
+# if(STP_BUILD_GUI)
+#     add_executable(${TARGET_NAME} ${SOURCE_FILES})
+#     target_link_libraries(${TARGET_NAME} PUBLIC imgui implot ${CORE_NAME})
+#
+#     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/replay_viewer.cpp")
+#         add_executable(stp-replay-viewer src/replay_viewer.cpp)
+#         target_link_libraries(stp-replay-viewer PUBLIC imgui implot ${CORE_NAME})
+#     endif()
+#
+#     add_executable(stp-physics-viewer src/physics_viewer.cpp)
+#     target_link_libraries(stp-physics-viewer PUBLIC imgui implot ${CORE_NAME})
+# endif()

@@ -26,8 +26,6 @@ static_assert(
 );
 static_assert(std::is_trivially_copyable_v<RadarItem>);
 
-PYBIND11_MAKE_OPAQUE(std::vector<Rock>);
-
 namespace pybind11::detail {
 
 template<>

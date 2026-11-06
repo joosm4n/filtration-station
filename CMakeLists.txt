@@ -3,14 +3,14 @@ set(TARGET_NAME filtration-station)
 set(CORE_NAME ${TARGET_NAME}-core)
 project(${TARGET_NAME} VERSION 1.0 LANGUAGES CXX)
 
-option(STP_BUILD_GUI "Build the ImGui filter viewer" ON)
+option(STP_BUILD_GUI "Build the ImGui filter viewer" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(COMPILER_FLAGS "-Wall -ggdb -Wno-unused -Werror=return-type -rdynamic -fsanitize=address")
+# set(COMPILER_FLAGS "-Wall -ggdb -Wno-unused -Werror=return-type -rdynamic -fsanitize=address")
 # set(COMPILER_FLAGS "-Wall -ggdb -Wno-unused -Werror=return-type -rdynamic")
-# set(COMPILER_FLAGS "-Wall -Ofast -Wno-unused -Werror=return-type")
+set(COMPILER_FLAGS "-Wall -Ofast -Wno-unused -Werror=return-type")
 set(CMAKE_C_FLAGS ${COMPILER_FLAGS})
 set(CMAKE_CXX_FLAGS  ${COMPILER_FLAGS})
 set(CMAKE_EXPORT_COMPILE_COMMANDS true)
@@ -42,7 +42,6 @@ list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/physics\\.cpp$")
 add_library(${CORE_NAME} STATIC
   src/filters.cpp
   src/physics.cpp
-  src/tracker.cpp
 )
 target_include_directories(${CORE_NAME} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -50,8 +49,8 @@ target_include_directories(${CORE_NAME} PUBLIC
 )
 target_link_libraries(${CORE_NAME} PUBLIC glm::glm Threads::Threads)
 
-pybind11_add_module(filter_bindings src/bindings.cc)
-target_link_libraries(filter_bindings PRIVATE ${CORE_NAME})
+pybind11_add_module(rock_tracker src/bindings.cc)
+target_link_libraries(rock_tracker PRIVATE ${CORE_NAME})
 
 if(STP_BUILD_GUI)
     add_executable(${TARGET_NAME} ${SOURCE_FILES})

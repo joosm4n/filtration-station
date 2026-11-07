@@ -13,11 +13,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
+#include <optional>
+#include <ranges>
 #include <thread>
 #include <vector>
 
 #include <glm/ext/quaternion_geometric.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include "polyfit.hpp"
 
@@ -67,7 +71,7 @@ struct HistoryItem {
 struct Rock {
     glm::vec3 position = {};
     float diameter = 0.0f;
-    glm::vec3 velocity = {};
+    std::optional<glm::vec3> velocity = {};
     float last_seen = 0.0f;
 
     static constexpr std::size_t HISTORY_LEN = 30;
@@ -89,11 +93,13 @@ struct Rock {
                 < MIN_TIME_STEP) {
             return;
         }
-        this->velocity = poly::polyfit3D(
-                             this->history_times._data,
-                             this->history_positions._data
-        )
-                             .eval(this->last_seen);
+        this->velocity.emplace(
+            poly::polyfit3D(
+                this->history_times._data,
+                this->history_positions._data
+            )
+                .eval(this->last_seen)
+        );
     }
 
     inline void
@@ -109,12 +115,16 @@ struct Rock {
     }
 
     inline glm::vec3 predicted_position(float time) const {
-        if (glm::all(
-                glm::equal(this->velocity, glm::vec3 {0.0f}, VEC3_EQ_EPSILON)
-            )) {
+        if (this->velocity.has_value()) {
+            const auto vel = this->velocity.value();
+            return this->position + vel * (time - this->last_seen);
+        } else {
             return this->position;
         }
-        return this->position + this->velocity * (time - this->last_seen);
+    }
+
+    inline glm::vec3 vel_or() const {
+        return this->velocity.value_or(glm::vec3 {0.0f});
     }
 };
 

@@ -15,9 +15,14 @@
 #include <cstddef>
 #include <thread>
 #include <vector>
+#include <optional>
+#include <limits>
+#include <ranges>
 
-#include <glm/ext/quaternion_geometric.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/ext/quaternion_geometric.hpp>
+#include <glm/gtx/vector_space.hpp>
 
 #include "polyfit.hpp"
 
@@ -67,7 +72,7 @@ struct HistoryItem {
 struct Rock {
     glm::vec3 position = {};
     float diameter = 0.0f;
-    glm::vec3 velocity = {};
+    std::optional<glm::vec3> velocity = {};
     float last_seen = 0.0f;
 
     static constexpr std::size_t HISTORY_LEN = 30;
@@ -89,11 +94,10 @@ struct Rock {
                 < MIN_TIME_STEP) {
             return;
         }
-        this->velocity = poly::polyfit3D(
-                             this->history_times._data,
-                             this->history_positions._data
-        )
-                             .eval(this->last_seen);
+        this->velocity.emplace(poly::polyfit3D(                             
+            this->history_times._data,
+            this->history_positions._data
+        ).eval(this->last_seen));
     }
 
     inline void
@@ -109,12 +113,16 @@ struct Rock {
     }
 
     inline glm::vec3 predicted_position(float time) const {
-        if (glm::all(
-                glm::equal(this->velocity, glm::vec3 {0.0f}, VEC3_EQ_EPSILON)
-            )) {
+        if (this->velocity.has_value()) {
+            const auto vel = this->velocity.value(); 
+            return this->position + vel * (time - this->last_seen);
+        } else {
             return this->position;
         }
-        return this->position + this->velocity * (time - this->last_seen);
+    }
+
+    inline glm::vec3 vel_or() const {
+        return this->velocity.value_or(glm::vec3{0.0f});
     }
 };
 
@@ -221,3 +229,125 @@ struct Tracker {
         });
     }
 };
+
+// If we fly at my_velocity, how close do we get to the worst rock in the next `horizon` seconds,
+// after subtracting its keep-out radius? Positive = safe, negative = collision course.
+// rel_pos  (n,3)  where each rock is, relative to us
+// rock_vel (n,3)  how fast each rock is moving
+// keep_out (n,)   radius we want to stay outside (rock radius + safety margin)
+inline float clearance(const glm::vec3& my_velocity, std::span<const glm::vec3> rel_pos, std::span<const glm::vec3> rock_vel, std::span<const float> keep_out, float horizon=15.0) {
+    float worst = std::numeric_limits<float>::infinity();
+    for (size_t i = 0; i < rel_pos.size(); ++i) {
+        glm::vec3 rel_vel = rock_vel[i] - my_velocity;
+        float speed_squared = glm::dot(rel_vel, rel_vel) + 1e-9f;
+
+        // time of closest approach, clamped to [0, horizon]
+        float t = -glm::dot(rel_pos[i], rel_vel) / speed_squared;
+        t = std::clamp(t, 0.0f, horizon);
+
+        float closest = glm::length(rel_pos[i] + t * rel_vel);
+        worst = std::min(worst, closest - keep_out[i]);
+    }
+    return worst;
+}
+
+inline std::pair<float, float> two_sideways_directions(const auto& direction) {
+    // Two unit vectors that are perpendicular to `direction` and to each other.
+    glm::vec3 helper = glm::abs(direction[2]) < 0.9f ?
+        glm::vec3{0.0f, 0.0f, 1.0f} :
+        glm::vec3{1.0f, 0.0f, 0.0f};
+
+    const auto side1 = glm::cross(direction, helper);
+    const auto side1 /= glm::length(side1);
+    const auto side2 = glm::cross(direction, side1);
+    return {side1, side2};
+}
+
+template<std::size_t N, typename T= float>
+consteval std::array<T, N> linspace(T start, T stop, bool endpoint = true) {
+    std::array<T, N> arr{};
+    if (endpoint) {
+        const auto step = 
+    }
+    for (std::size_t i = 0; i < N; ++i) {
+        
+    }
+    return arr;
+}
+
+struct Avoider {
+    float margin = 6.0f;    // metres of clearance beyond each rock's surface
+    float unknown_extra = 4.0f; // extra margin for rocks whose velocity we don't know yet
+    float horizon = 50.0f;
+    std::optional<glm::vec3> last_dodge = std::nullopt; // remembered so we don't flip-flop between dodges
+
+    inline glm::vec3 choose(const glm::vec3& wanted_velocity, const std::vector<Rock>& rocks, const glm::vec3& shuttle_position, float now) {
+        // Return the velocity to fly: the wanted one if it is safe, else the smallest safe change.
+        const float speed = glm::length(wanted_velocity);
+        if (speed < 1e-3f || rocks.size() == 0) {
+            return wanted_velocity;
+        }
+        const std::size_t n_rocks = rocks.size();
+
+        // Describe every rock as plain arrays.
+        auto rel_pos_view = rocks | std::views::transform([&](const Rock& r) {
+            return r.predicted_position(now) - shuttle_position;
+        });
+        const auto rel_pos = std::vector(rel_pos_view.begin(), rel_pos_view.end());
+
+        auto rock_vel_view = rocks | std::views::transform([&](const Rock& r) {
+            return r.vel_or();
+        });
+        const auto rock_vel = std::vector(rock_vel_view.begin(), rock_vel_view.end());
+
+        auto keep_out_view = rocks | std::views::transform([&](const Rock& r) {
+            return r.diameter / 2 + this->margin + (r.velocity.has_value() ? this->unknown_extra : 0.0f);
+        });
+        const auto keep_out = std::vector(keep_out_view.begin(), keep_out_view.end());
+
+        auto score = [&](const glm::vec3& velocity) {
+            return clearance(velocity, rel_pos, rock_vel, keep_out, this->horizon);
+        };
+
+        // 1. Nothing in the way? Fly exactly as wanted (no thruster use at all).
+        if (score(wanted_velocity) > 0.0f) {
+            this->last_dodge = std::nullopt;
+            return wanted_velocity;
+        }
+
+        // 2. Still dodging? Keep the same dodge while it still works (stops flip-flopping).
+        if (this->last_dodge.has_value()) {
+            if (score(this->last_dodge.value()) > 0) 
+            return this->last_dodge.value();
+        }
+
+        // 3. Try sideways dodges, SMALLEST first: a small velocity change costs the least fuel.
+        auto [side1, side2] = two_sideways_directions(wanted_velocity / speed);
+        auto tried = [wanted_velocity];
+
+        constexpr auto angles = (0, 2 * glm::pi, 8);
+        for (const auto& size : {0.05, 0.1, 0.2, 0.35, 0.5, 0.75}){         // as a fraction of our speed
+            for (const auto angle : np.linspace(0, 2 * np.pi, 8, endpoint=False)) {
+                sideways = np.cos(angle) * side1 + np.sin(angle) * side2;
+                candidate = wanted_velocity + size * speed * sideways;
+                if (score(candidate) > 0){
+                    self.last_dodge = candidate;
+                    return candidate;
+                }
+                tried.append(candidate);
+            }
+        }
+
+        // 4. No sideways dodge works: try slowing down.
+        for fraction in (0.5, 0.25, 0.0):
+            candidate = wanted_velocity * fraction
+            if score(candidate) > 0:
+                self.last_dodge = candidate
+                return candidate
+            tried.append(candidate)
+
+        // 5. Nothing is fully safe: take the least-bad option we looked at.
+        self.last_dodge = max(tried, key=score)
+        return self.last_dodge
+    }
+}

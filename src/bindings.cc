@@ -4,9 +4,14 @@
 //   bank = pf.TrackerBank(pf.TrackerConfig(), threads=4)
 //   bank.ingest_array(arr)      # arr: (N, 8) float64 = id, t, x, y, z, rc, vr, d
 //   p = bank.predict(7, 12.5)   # p.x, p.y, p.z, p.sx ...
+
+#include <string>
+#include <format>
+
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <pybind11/stl_bind.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -61,50 +66,64 @@ struct type_caster<glm::vec3> {
 using RadarArray =
     py::array_t<float, py::array::c_style | py::array::forcecast>;
 
+static std::string shape_str(const RadarArray& a) {
+    std::string s = "(";
+    for (py::ssize_t i = 0; i < a.ndim(); ++i) {
+        s += std::format("{}{}", i ? ", " : "", a.shape(i));
+    }
+    return s + ")";
+}
+
 PYBIND11_MODULE(rock_tracker, m) {
     // Read-only view of a tracked rock (only what you get out of Tracker.rocks).
     py::class_<Rock>(m, "Rock")
         .def_readonly("position", &Rock::position)
         .def_readonly("diameter", &Rock::diameter)
         .def_readonly("velocity", &Rock::velocity)
-        .def_readonly("last_seen", &Rock::last_seen);
+        .def_readonly("last_seen", &Rock::last_seen)
+        .def("predicted_position", &Rock::predicted_position, "now"_a);
+
+    py::class_<std::vector<Rock>>(m, "RockList")
+        .def("__len__", [](const std::vector<Rock>& v) {return v.size();})
+        .def("__genitem__", [](const std::vector<Rock>& v, py::ssize_t i) -> const Rock& {
+            if (i < 0) i += v.size();
+            if (i < 0 || std::size_t(i) >= v.size()) throw py::index_error();
+            return v[i];
+        }, py::return_value_policy::reference_internal)
+        .def("__iter__", [](const std::vector<Rock>& v) {
+            return py::make_iterator(v.begin(), v.end());
+        }, py::keep_alive<0, 1>());
+#include <pybind11/stl.h>
 
     py::class_<Tracker>(m, "Tracker")
         .def(py::init<>())
         // Returns a snapshot (list of Rock copies), so it stays valid after update().
         .def_property_readonly(
             "rocks",
-            [](const Tracker& t) { return t.rocks; }
+            [](Tracker& t) -> std::vector<Rock>& { return t.rocks; },
+            py::return_value_policy::reference_internal
         )
         .def(
             "update",
             [](Tracker& self,
-               const RadarArray& radar_items,
+               const std::vector<RadarArray>& radar_items,
                const glm::vec3& shuttle_position,
                float now) {
-                // Accepted shapes (C-contiguous float32, converted if needed):
-                //   (3, 3)     one item
-                //   (N, 3, 3)  N items
-                //   (N, 9)     N items, one flat row each
-                // Row-major 3x3 layout of one item:
-                //   [[x, y, z], [distance, range_rate, diameter], [time_stamp, pad, pad]]
-                const auto nd = radar_items.ndim();
-                const bool ok = radar_items.size() % 9 == 0
-                    && ((nd == 2 && radar_items.shape(1) == 9)
-                        || (nd == 2 && radar_items.shape(0) == 3
-                            && radar_items.shape(1) == 3)
-                        || (nd == 3 && radar_items.shape(1) == 3
-                            && radar_items.shape(2) == 3));
+            // Each list element is one item, shape (3, 3) or (9,):
+            //   [[x, y, z], [distance, range_rate, diameter], [time_stamp, pad, pad]]
+            std::vector<RadarItem> items(radar_items.size());
+            for (std::size_t i = 0; i < radar_items.size(); ++i) {
+                const RadarArray& a = radar_items[i];
+                const bool ok = a.size() == 9
+                    && ((a.ndim() == 1)
+                        || (a.ndim() == 2 && a.shape(0) == 3 && a.shape(1) == 3));
                 if (!ok) {
-                    throw py::value_error(
-                        "radar_items must have shape (3, 3), (N, 3, 3) or (N, 9)"
-                    );
+                    throw py::value_error(std::format(
+                        "radar_items[{}] must have shape (3, 3) or (9,), but has shape {}",
+                        i, shape_str(a)));
                 }
-                // Zero-copy view of the numpy buffer as RadarItems.
-                const std::span<const RadarItem> items(
-                    reinterpret_cast<const RadarItem*>(radar_items.data()),
-                    static_cast<std::size_t>(radar_items.size() / 9)
-                );
+                std::memcpy(&items[i], a.data(), 9 * sizeof(float));
+            }
                 self.update(items, shuttle_position, now);
             },
             "radar_items"_a,

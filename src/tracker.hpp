@@ -1,16 +1,7 @@
 #pragma once
-// Online tracking API on top of filters.hpp.
-//
-//   TrackerBank bank(cfg, /*threads=*/4);
-//   bank.ingest(measurements);                 // any number of objects, any order
-//   Prediction p = bank.predict(id, t_future); // position (and velocity) at time t
-//
-// Design rules (so it can be wrapped for Python / used from many threads):
-//   * public types are plain structs of double / int64 / enum, no glm, no unique_ptr
-//   * Tracker      : one object, NOT thread-safe on its own
-//   * TrackerBank  : thread-safe (shared_mutex); ingest() runs objects in parallel
-//   * nothing throws inside worker threads; errors are thrown on the calling thread
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -20,6 +11,7 @@
 #include <vector>
 
 #include <glm/ext/quaternion_geometric.hpp>
+#include <glm/ext/scalar_constants.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -61,11 +53,6 @@ struct RingBuffer {
             return N;
         return this->_idx;
     }
-};
-
-struct HistoryItem {
-    float time;
-    glm::vec3 pos;
 };
 
 struct Rock {
@@ -191,8 +178,12 @@ struct Tracker {
         return best;
     }
 
+    /*
+        The radar gives positions relative to the shuttle. Add the shuttle's own
+        position so that all sightings share one fixed frame.
+    */
     void update(
-        const std::span<const RadarItem> radar_items,
+        std::span<const RadarItem> radar_items,
         const glm::vec3& shuttle_position,
         float now
     ) {
@@ -232,7 +223,7 @@ struct Tracker {
     }
 };
 
-/*
+/* 
     If we fly at my_velocity, how close do we get to the worst rock in the next `horizon` seconds,
     after subtracting its keep-out radius? Positive = safe, negative = collision course.
     rel_pos  (n,3)  where each rock is, relative to us
@@ -261,7 +252,7 @@ inline float clearance(
     return worst;
 }
 
-/*
+/* 
     Two unit vectors that are perpendicular to `direction` and to each other.
 */
 inline std::pair<glm::vec3, glm::vec3>

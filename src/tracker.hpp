@@ -1,15 +1,5 @@
 #pragma once
-// Online tracking API on top of filters.hpp.
-//
-//   TrackerBank bank(cfg, /*threads=*/4);
-//   bank.ingest(measurements);                 // any number of objects, any order
-//   Prediction p = bank.predict(id, t_future); // position (and velocity) at time t
-//
-// Design rules (so it can be wrapped for Python / used from many threads):
-//   * public types are plain structs of double / int64 / enum, no glm, no unique_ptr
-//   * Tracker      : one object, NOT thread-safe on its own
-//   * TrackerBank  : thread-safe (shared_mutex); ingest() runs objects in parallel
-//   * nothing throws inside worker threads; errors are thrown on the calling thread
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -18,11 +8,12 @@
 #include <optional>
 #include <limits>
 #include <ranges>
+#include <array>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/ext/quaternion_geometric.hpp>
-#include <glm/gtx/vector_space.hpp>
+#include <glm/ext/scalar_constants.hpp>
 
 #include "polyfit.hpp"
 
@@ -62,11 +53,6 @@ struct RingBuffer {
             return N;
         return this->_idx;
     }
-};
-
-struct HistoryItem {
-    float time;
-    glm::vec3 pos;
 };
 
 struct Rock {
@@ -189,8 +175,12 @@ struct Tracker {
         return best;
     }
 
+    /*
+        The radar gives positions relative to the shuttle. Add the shuttle's own
+        position so that all sightings share one fixed frame.
+    */
     void update(
-        const std::span<const RadarItem> radar_items,
+        std::span<const RadarItem> radar_items,
         const glm::vec3& shuttle_position,
         float now
     ) {
@@ -230,11 +220,13 @@ struct Tracker {
     }
 };
 
-// If we fly at my_velocity, how close do we get to the worst rock in the next `horizon` seconds,
-// after subtracting its keep-out radius? Positive = safe, negative = collision course.
-// rel_pos  (n,3)  where each rock is, relative to us
-// rock_vel (n,3)  how fast each rock is moving
-// keep_out (n,)   radius we want to stay outside (rock radius + safety margin)
+/* 
+    If we fly at my_velocity, how close do we get to the worst rock in the next `horizon` seconds,
+    after subtracting its keep-out radius? Positive = safe, negative = collision course.
+    rel_pos  (n,3)  where each rock is, relative to us
+    rock_vel (n,3)  how fast each rock is moving
+    keep_out (n,)   radius we want to stay outside (rock radius + safety margin)
+*/
 inline float clearance(const glm::vec3& my_velocity, std::span<const glm::vec3> rel_pos, std::span<const glm::vec3> rock_vel, std::span<const float> keep_out, float horizon=15.0) {
     float worst = std::numeric_limits<float>::infinity();
     for (size_t i = 0; i < rel_pos.size(); ++i) {
@@ -251,29 +243,20 @@ inline float clearance(const glm::vec3& my_velocity, std::span<const glm::vec3> 
     return worst;
 }
 
-inline std::pair<float, float> two_sideways_directions(const auto& direction) {
-    // Two unit vectors that are perpendicular to `direction` and to each other.
+/* 
+    Two unit vectors that are perpendicular to `direction` and to each other.
+*/
+inline std::pair<glm::vec3, glm::vec3> two_sideways_directions(const auto& direction) {
     glm::vec3 helper = glm::abs(direction[2]) < 0.9f ?
         glm::vec3{0.0f, 0.0f, 1.0f} :
         glm::vec3{1.0f, 0.0f, 0.0f};
 
-    const auto side1 = glm::cross(direction, helper);
-    const auto side1 /= glm::length(side1);
+    auto side1 = glm::cross(direction, helper);
+    side1 /= glm::length(side1);
     const auto side2 = glm::cross(direction, side1);
     return {side1, side2};
 }
 
-template<std::size_t N, typename T= float>
-consteval std::array<T, N> linspace(T start, T stop, bool endpoint = true) {
-    std::array<T, N> arr{};
-    if (endpoint) {
-        const auto step = 
-    }
-    for (std::size_t i = 0; i < N; ++i) {
-        
-    }
-    return arr;
-}
 
 struct Avoider {
     float margin = 6.0f;    // metres of clearance beyond each rock's surface
@@ -281,8 +264,10 @@ struct Avoider {
     float horizon = 50.0f;
     std::optional<glm::vec3> last_dodge = std::nullopt; // remembered so we don't flip-flop between dodges
 
+    /*
+        Return the velocity to fly: the wanted one if it is safe, else the smallest safe change.
+    */
     inline glm::vec3 choose(const glm::vec3& wanted_velocity, const std::vector<Rock>& rocks, const glm::vec3& shuttle_position, float now) {
-        // Return the velocity to fly: the wanted one if it is safe, else the smallest safe change.
         const float speed = glm::length(wanted_velocity);
         if (speed < 1e-3f || rocks.size() == 0) {
             return wanted_velocity;
@@ -323,31 +308,120 @@ struct Avoider {
 
         // 3. Try sideways dodges, SMALLEST first: a small velocity change costs the least fuel.
         auto [side1, side2] = two_sideways_directions(wanted_velocity / speed);
-        auto tried = [wanted_velocity];
+        std::vector<std::pair<glm::vec3, float>> tried = {{wanted_velocity, score(wanted_velocity)}};
+        
+        constexpr auto fracs = std::array<float, 6>({0.05f, 0.1f, 0.2f, 0.35f, 0.5f, 0.75f});
+        constexpr auto angles = poly::linspace<float, 8>(0.0f, 2 * glm::pi<float>(), false);
 
-        constexpr auto angles = (0, 2 * glm::pi, 8);
-        for (const auto& size : {0.05, 0.1, 0.2, 0.35, 0.5, 0.75}){         // as a fraction of our speed
-            for (const auto angle : np.linspace(0, 2 * np.pi, 8, endpoint=False)) {
-                sideways = np.cos(angle) * side1 + np.sin(angle) * side2;
-                candidate = wanted_velocity + size * speed * sideways;
-                if (score(candidate) > 0){
-                    self.last_dodge = candidate;
+        tried.reserve(fracs.size() * angles.size());
+        for (const auto& size : fracs){         // as a fraction of our speed
+            for (const auto& angle : angles) {
+                const auto sideways = std::cos(angle) * side1 + std::sin(angle) * side2;
+                const auto candidate = wanted_velocity + size * speed * sideways;
+                const auto can_score = score(candidate);
+                if (can_score > 0){
+                    this->last_dodge = candidate;
                     return candidate;
                 }
-                tried.append(candidate);
+                tried.push_back({candidate, can_score});
             }
         }
 
         // 4. No sideways dodge works: try slowing down.
-        for fraction in (0.5, 0.25, 0.0):
-            candidate = wanted_velocity * fraction
-            if score(candidate) > 0:
-                self.last_dodge = candidate
-                return candidate
-            tried.append(candidate)
-
+        for (const auto& f : {0.5f, 0.25f, 0.0f}) {
+            const auto candidate = wanted_velocity * f;
+            const auto can_score = score(candidate);
+            if (can_score > 0) {
+                this->last_dodge = candidate;
+                return candidate;
+            }
+            tried.push_back({candidate, can_score});
+        }
         // 5. Nothing is fully safe: take the least-bad option we looked at.
-        self.last_dodge = max(tried, key=score)
-        return self.last_dodge
+        auto& curr_best = *tried.begin();
+        auto curr_score = curr_best.second;
+        for (const auto& t : tried) {
+            if (t.second > curr_score) {
+                curr_best = t;
+            }
+        }
+        this->last_dodge.emplace(curr_best.first);
+        return this->last_dodge.value();
     }
-}
+};
+
+
+/*
+    Decides the velocity we WANT (before avoidance). Instead of constantly steering at the exact
+    centre of the target, it lets us coast while our current path already passes well inside the
+    goal sphere, and only steers when the path drifts towards the edge. Less steering = less fuel.
+*/
+struct GoalPlanner {
+    float cruise_speed = 0.0f;
+    float goal_radius = 10.0f;
+    float start;            // start steering if we would miss the centre by more than this
+    float stop;     // ...and keep steering until the miss is under this
+    bool correcting = true;  
+
+    GoalPlanner(float cruise_speed, float goal_radius=10.0f, float start_fraction=0.7f, float stop_fraction=0.3f) {
+        this->cruise_speed = cruise_speed;
+        this->goal_radius = goal_radius;
+        this->start = start_fraction * goal_radius; 
+        this->stop = stop_fraction * goal_radius;
+        this->correcting = true;
+    }
+
+    /* 
+        How far from the target centre we would pass if we kept our current velocity. 
+    */
+    inline float miss_distance(const glm::vec3& shuttle_position, const glm::vec3& shuttle_velocity, const glm::vec3& target_position) {
+        const auto speed = glm::length(shuttle_velocity);
+        if (speed < 0.98f * this->cruise_speed) {
+            return std::numeric_limits<float>::infinity();  // not at cruise speed yet: keep accelerating
+        }
+        const auto heading = shuttle_velocity / speed;
+        const auto to_target = target_position - shuttle_position;
+        const auto along = glm::dot(to_target,heading);           // how far ahead the target is along our heading
+        if (along <= 0.0f) {
+            return std::numeric_limits<float>::infinity();  // we are moving away from it
+        }
+        return glm::length(to_target - along * heading);    // sideways distance at closest approach
+    }
+
+    inline glm::vec3 wanted_velocity(const glm::vec3& shuttle_position, const glm::vec3& shuttle_velocity, const glm::vec3& target_position) {
+        const auto miss = this->miss_distance(shuttle_position, shuttle_velocity, target_position);
+        if (this->correcting && miss < this->stop) {
+            this->correcting = false;                         // on a good path: coast
+        } else if (!this->correcting && miss > this->start) {
+            this->correcting = true;                          // drifting off: steer again
+        }
+        if (!this->correcting) {
+            return shuttle_velocity;      // wanting what we have = no thruster use
+        }
+        const auto to_target = target_position - shuttle_position;
+        return this->cruise_speed * to_target / glm::length(to_target);
+    }
+};
+
+struct BurnGovernor {
+    float gain = 5.0f;  // acceleration (m/s^2) per m/s of velocity error
+    float start = 0.3f; // start burning when the error is bigger than this (m/s)
+    float stop = 0.1f;  // stop burning once the error is smaller than this (m/s)
+    bool burning = false;
+
+    BurnGovernor(float gain_ = 5.0f, float start_ = 0.3f, float stop_ = 0.1f, bool burning_ = false) 
+        : gain(gain_), start(start_), stop(stop_), burning(burning_)
+        {}
+
+    inline glm::vec3 acceleration(const glm::vec3& wanted_velocity, const glm::vec3& current_velocity) {
+        const auto error = wanted_velocity - current_velocity;
+        const auto size = glm::length(error);
+        if (this->burning && size < this->stop) {
+            this->burning = false;
+        }
+        else if (!this->burning && size > this->start) {
+            this->burning = true;
+        }
+        return this->burning ? this->gain * error : glm::vec3{0.0f};
+    }
+};

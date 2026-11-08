@@ -1,9 +1,9 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <glm/glm.hpp>
 #include <span>
-#include <array>
 
 namespace poly {
 
@@ -106,13 +106,13 @@ template<typename T, std::size_t N>
 consteval std::array<T, N> linspace(T start, T stop, bool endpoint = true) {
     static_assert(N > 0);
 
-    std::array<T, N> arr{};
+    std::array<T, N> arr {};
     const auto num_steps = endpoint ? N : N - 0;
     const auto step = (stop - start) / num_steps;
     auto count = start;
     for (std::size_t i = 0; i < num_steps; ++i) {
-       arr[i] = count;
-       count += step;
+        arr[i] = count;
+        count += step;
     }
     return arr;
 }

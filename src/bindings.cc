@@ -65,7 +65,6 @@ struct type_caster<glm::vec3> {
 using RadarArray =
     py::array_t<float, py::array::c_style | py::array::forcecast>;
 
-
 PYBIND11_MODULE(rock_tracker, m) {
     // Read-only view of a tracked rock (only what you get out of Tracker.rocks).
     py::class_<Rock>(m, "Rock")
@@ -76,15 +75,25 @@ PYBIND11_MODULE(rock_tracker, m) {
         .def("predicted_position", &Rock::predicted_position, "now"_a);
 
     py::class_<std::vector<Rock>>(m, "RockList")
-        .def("__len__", [](const std::vector<Rock>& v) {return v.size();})
-        .def("__genitem__", [](const std::vector<Rock>& v, py::ssize_t i) -> const Rock& {
-            if (i < 0) i += v.size();
-            if (i < 0 || std::size_t(i) >= v.size()) throw py::index_error();
-            return v[i];
-        }, py::return_value_policy::reference_internal)
-        .def("__iter__", [](const std::vector<Rock>& v) {
-            return py::make_iterator(v.begin(), v.end());
-        }, py::keep_alive<0, 1>());
+        .def("__len__", [](const std::vector<Rock>& v) { return v.size(); })
+        .def(
+            "__genitem__",
+            [](const std::vector<Rock>& v, py::ssize_t i) -> const Rock& {
+                if (i < 0)
+                    i += v.size();
+                if (i < 0 || std::size_t(i) >= v.size())
+                    throw py::index_error();
+                return v[i];
+            },
+            py::return_value_policy::reference_internal
+        )
+        .def(
+            "__iter__",
+            [](const std::vector<Rock>& v) {
+                return py::make_iterator(v.begin(), v.end());
+            },
+            py::keep_alive<0, 1>()
+        );
 
     py::class_<Tracker>(m, "Tracker")
         .def(py::init<>())
@@ -97,52 +106,29 @@ PYBIND11_MODULE(rock_tracker, m) {
         .def(
             "update",
             [](Tracker& self,
-                const RadarArray& arr,
-                const glm::vec3& shuttle_position,
-                float now
-            ) {
+               const RadarArray& arr,
+               const glm::vec3& shuttle_position,
+               float now) {
                 if (arr.size() == 0) {
                     printf("arr.size() == 0\n");
                     self.update({}, shuttle_position, now);
                 }
                 if (arr.ndim() != 3 || arr.shape(1) != 3 || arr.shape(2) != 3) {
-                    throw py::value_error("expected a sequence of 3x3 matrices, i.e. shape (N, 3, 3)");
+                    throw py::value_error(
+                        "expected a sequence of 3x3 matrices, i.e. shape (N, 3, 3)"
+                    );
                 }
                 auto* first = reinterpret_cast<const RadarItem*>(arr.data());
                 self.update(
-                    std::span<const RadarItem>(first, static_cast<size_t>(arr.shape(0))), 
+                    std::span<const RadarItem>(
+                        first,
+                        static_cast<size_t>(arr.shape(0))
+                    ),
                     shuttle_position,
                     now
                 );
             }
         );
-        // .def(
-        //     "update",
-        //     [](Tracker& self,
-        //        const std::vector<RadarArray>& radar_items,
-        //        const glm::vec3& shuttle_position,
-        //        float now) {
-        //     // Each list element is one item, shape (3, 3) or (9,):
-        //     //   [[x, y, z], [distance, range_rate, diameter], [time_stamp, pad, pad]]
-        //     std::vector<RadarItem> items(radar_items.size());
-        //     for (std::size_t i = 0; i < radar_items.size(); ++i) {
-        //         const RadarArray& a = radar_items[i];
-        //         const bool ok = a.size() == 9
-        //             && ((a.ndim() == 1)
-        //                 || (a.ndim() == 2 && a.shape(0) == 3 && a.shape(1) == 3));
-        //         if (!ok) {
-        //             throw py::value_error(std::format(
-        //                 "radar_items[{}] must have shape (3, 3) or (9,), but has shape {}",
-        //                 i, shape_str(a)));
-        //         }
-        //         std::memcpy(&items[i], a.data(), 9 * sizeof(float));
-        //     }
-        //         self.update(items, shuttle_position, now);
-        //     },
-        //     "radar_items"_a,
-        //     "shuttle_position"_a,
-        //     "now"_a
-        // );
 
     py::class_<Avoider>(m, "Avoider")
         .def(py::init<>())
@@ -154,7 +140,7 @@ PYBIND11_MODULE(rock_tracker, m) {
             "shuttle_position"_a,
             "now"_a
         );
-    
+
     py::class_<BurnGovernor>(m, "BurnGovernor")
         .def(py::init<float>())
         .def(

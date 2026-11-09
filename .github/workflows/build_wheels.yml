@@ -16,7 +16,7 @@ jobs:
           persist-credentials: false
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v4.3.5'
+        # uses: pypa/cibuildwheel@v4.3.5'
         run: uvx build
 
         # env:

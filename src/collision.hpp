@@ -1,0 +1,92 @@
+#pragma once
+
+#include <glm/ext/vector_float3.hpp>
+#include <glm/geometric.hpp>
+#include <glm/glm.hpp>
+#include <glm/trigonometric.hpp>
+
+/*
+ * Plan:
+ *  Create a frustum
+ *      - Get a 2 param func to define cone from line from ship to station
+ *      - Set a slope (radius rate)
+ *
+ *      angle between vectors 'u' and 'v' = acos( (u * v) / (|u| * |v|) )
+ *
+ *
+ *  What can we ignore? 
+ *      Anything moving away from us
+ *      
+ */
+
+namespace wso_stp {
+
+constexpr std::size_t AVERAGE_RUNTIME_SECS = 200; // approx
+constexpr std::size_t MAX_VELOCITY = 5; // approx (m/s)
+
+struct Cone {
+    glm::vec3 start_position;
+    glm::vec3 end_position;
+    glm::vec3 raw_vector;
+    glm::vec3 vec_norm;
+    float vec_len;
+    float angle_rads = glm::radians(45.0f);
+
+    inline void
+    reset(const glm::vec3& start_point, const ::glm::vec3& end_point) {
+        this->start_position = start_point;
+        this->end_position = end_point;
+
+        const auto v = end_point - start_point;
+        this->raw_vector = v;
+        this->vec_norm = glm::normalize(v);
+        this->vec_len = glm::length(v);
+    }
+
+    Cone() = default;
+
+    Cone(const glm::vec3& start_point, const glm::vec3& end_point) {
+        this->reset(start_point, end_point);
+    }
+
+    /*
+     * Finds the best frustum/cone angle from:
+     *  - max velocity of any obj
+     *  - runtime for the object to move
+     *  - distance for the ship to travel
+     *
+     *  Look at max asteroid velocity and runtime, then use that to create frustum
+     *  frustum_ang = atan[ (max vel * avg_runtime) / run_length ]
+     */
+    static inline float
+    calculate_angle(float max_vel, float runtime_secs, float run_length) {
+        return std::atan((max_vel * runtime_secs) / run_length);
+    }
+
+    inline void set_angle_degrees(float ang_degrees) {
+        this->angle_rads = glm::radians(ang_degrees);
+    }
+
+    /*
+     * Sets a new start_position of the Cone and recalculates all the supporting values
+     */
+    inline void update_start_pos(const glm::vec3& new_pos) {
+        this->reset(new_pos, this->end_position);
+    }
+
+    /*
+     * Finds whether the point lays within this cone.
+     *  This occurs when:
+     *      - dot product > 0.0
+     *      - ang_between cone vector and point vector is < half cone angle
+     */
+    inline bool check_collision(const glm::vec3& point) const {
+        const auto point_vec = point - start_position;
+        const auto dot = glm::dot(point_vec, this->raw_vector);
+        const auto ang =
+            glm::acos(dot / (glm::length(point_vec) * this->vec_len));
+        return dot > 0.0f && ang < this->angle_rads;
+    }
+};
+
+} // namespace wso_stp

@@ -223,7 +223,7 @@ struct Tracker {
     }
 };
 
-/* 
+/*
     If we fly at my_velocity, how close do we get to the worst rock in the next `horizon` seconds,
     after subtracting its keep-out radius? Positive = safe, negative = collision course.
     rel_pos  (n,3)  where each rock is, relative to us
@@ -252,7 +252,7 @@ inline float clearance(
     return worst;
 }
 
-/* 
+/*
     Two unit vectors that are perpendicular to `direction` and to each other.
 */
 inline std::pair<glm::vec3, glm::vec3>

@@ -15,6 +15,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "collision.hpp"
 #include "tracker.hpp"
 
 namespace py = pybind11;
@@ -180,4 +181,11 @@ PYBIND11_MODULE(rock_tracker, m) {
             "shuttle_velocity"_a,
             "target_position"_a
         );
+
+    using namespace collision;
+    py::class_<Cone>(m, "Cone")
+        .def(py::init<>())
+        .def("reset", &Cone::reset, "start_point"_a, "end_point"_a)
+        .def("set_angle_degrees", &Cone::set_angle_degrees, "ang_degrees"_a)
+        .def("check_collision", &Cone::check_collision, "point"_a);
 }

@@ -35,7 +35,7 @@ static const char* kPlotTitle[PLOT_COUNT] = {
     "x-y path",
     "Position",
     "Velocity",
-    "Acceleration",
+    "3D Graph",
     "Forecast error vs look-ahead",
     "Average forecast accuracy"
 };

@@ -3,6 +3,7 @@
 // the right. Whenever a control changes, on auto the filter is re-run from scratch over a fixed time
 // span (the "duration" slider); the plots just redraw every frame.
 
+#include "collision.hpp"
 #include "filters.hpp"
 #include "imgui.h"
 #include "plotting.hpp"
@@ -187,6 +188,22 @@ static void draw_marker(
     ImPlot::PlotScatter(label, x, y, 1, spec);
 }
 
+static void draw_marker_3d(
+    const char* label,
+    const float* x,
+    const float* y,
+    const float* z,
+    const ImVec4& col,
+    bool filled
+) {
+    ImPlot3DSpec spec;
+    spec.Marker = filled ? ImPlotMarker_Diamond : ImPlotMarker_Circle;
+    spec.MarkerSize = 9.0f;
+    spec.MarkerFillColor = filled ? col : ImVec4(0, 0, 0, 0);
+    spec.MarkerLineColor = col;
+    ImPlot3D::PlotScatter(label, x, y, z, 1, spec);
+}
+
 int main() {
     printf("-- Starting Filtration Station -- \n");
     AppState st;
@@ -297,7 +314,7 @@ int main() {
             ui_dirty |= ImGui::Checkbox("position", &show_pos);
             ui_dirty |= ImGui::Checkbox("velocity", &show_vel);
             ImGui::SameLine();
-            ui_dirty |= ImGui::Checkbox("acceleration", &show_acc);
+            ui_dirty |= ImGui::Checkbox("3d graph", &show_acc);
             ui_dirty |= ImGui::Checkbox("look-ahead error", &show_err);
             ImGui::SameLine();
             ui_dirty |= ImGui::Checkbox("avg accuracy", &show_avg);
@@ -468,6 +485,9 @@ int main() {
                 changed = true;
             }
 
+            constexpr ImVec4 CONE_LINE_COLOR {1.0f, 0.0f, 0.0f, 0.5f};
+            constexpr float CONE_LINE_WEIGHT = 1.5f;
+            constexpr ImVec4 CONE_FILL_COLOR {1.0f, 1.0f, 1.0f, 0.2f};
             if (p.signal == SignalType::BODIES) {
                 changed |= ImGui::SliderInt(
                     "bodies",
@@ -478,6 +498,7 @@ int main() {
                 constexpr float cone_v_speed = 10.0f;
                 constexpr float cone_v_min_max = 10000.0f;
 
+                ImGui::SeparatorText("Cone");
                 bool cone_pos_changed = false;
                 auto start_pos = p.cone.start_position;
                 auto end_pos = p.cone.end_position;
@@ -494,6 +515,12 @@ int main() {
                     cone_v_speed,
                     -cone_v_min_max,
                     cone_v_min_max
+                );
+                changed |= ImGui::SliderInt(
+                    "NUM_ITERS",
+                    &collision::Cone::NUM_ITERS,
+                    0,
+                    100
                 );
                 if (cone_pos_changed) {
                     p.cone.reset(start_pos, end_pos);
@@ -512,6 +539,7 @@ int main() {
                     p.cone.set_angle_degrees(cone_ang);
                     changed = true;
                 }
+
                 changed |= ImGui::Checkbox("use cone", &p.use_cone);
                 ImGui::Text("Num bodies in cone: %d", bodies_in_cone);
 
@@ -620,6 +648,7 @@ int main() {
                     if (fit)
                         ImPlot::SetNextAxesToFit();
                     const ImPlotFlags base = ImPlotFlags_NoTitle;
+                    const ImPlot3DFlags base_3d = ImPlotFlags_NoTitle;
                     const int nt = static_cast<int>(result.tracks.size());
                     char lab[48];
                     auto L = [&](const char* s, int b) {
@@ -690,11 +719,9 @@ int main() {
                                     );
                                     if (p.use_cone) {
                                         ImPlotSpec cone_spec {};
-                                        cone_spec.LineColor =
-                                            ImVec4 {1.0f, 0.0f, 0.0f, 0.5f};
-                                        cone_spec.LineWeight = 1.5f;
-                                        cone_spec.FillColor =
-                                            ImVec4 {1.0f, 1.0f, 1.0f, 0.2f};
+                                        cone_spec.LineColor = CONE_LINE_COLOR;
+                                        cone_spec.LineWeight = CONE_LINE_WEIGHT;
+                                        cone_spec.FillColor = CONE_FILL_COLOR;
 
                                         const auto [cone_s, cone_r, cone_l] =
                                             p.cone.get_bounds();
@@ -833,53 +860,54 @@ int main() {
                             }
                             break;
                         case PLOT_ACC:
-                            if (ImPlot::BeginPlot(
-                                    "##acc",
+                            if (ImPlot3D::BeginPlot(
+                                    "##3d",
                                     ImVec2(-1, -1),
-                                    base
+                                    base_3d
                                 )) {
-                                ImPlot::SetupAxes("time [s]", "acceleration");
+                                ImPlot3D::SetupAxes("x", "y", "z");
+                                // std::array<float, Body::MAX_BODIES> xs_3d {};
+                                // std::array<float, Body::MAX_BODIES> ys_3d {};
+                                // std::array<float, Body::MAX_BODIES> zs_3d {};
+
                                 for (int b = 0; b < nt; ++b) {
                                     if (!show_body[b])
                                         continue;
                                     const Track& k = result.tracks[b];
                                     const ImVec4 c = body_col(b);
-                                    draw_line_lod(
-                                        L("x true", b),
-                                        t + 1,
-                                        k.tax.data(),
-                                        m,
-                                        kColActual,
-                                        false,
-                                        1.0f
-                                    );
-                                    draw_line_lod(
-                                        L("y true", b),
-                                        t + 1,
-                                        k.tay.data(),
-                                        m,
-                                        kColActual,
-                                        false,
-                                        1.0f
-                                    );
-                                    draw_line_lod(
-                                        L("x", b),
-                                        t,
-                                        k.fx->a_k.data(),
-                                        n,
+                                    draw_marker_3d(
+                                        L("pos", b),
+                                        &k.fut_x,
+                                        &k.fut_y,
+                                        &k.fut_z,
                                         c,
                                         true
                                     );
-                                    draw_line_lod(
-                                        L("y", b),
-                                        t,
-                                        k.fy->a_k.data(),
-                                        n,
-                                        dim(c),
-                                        true
+                                }
+                                if (p.use_cone) {
+                                    const auto& mesh = p.cone.mesh;
+                                    ImPlot3DSpec mesh_spec;
+                                    mesh_spec.Stride = (int)sizeof(glm::vec3);
+                                    mesh_spec.LineColor = CONE_LINE_COLOR;
+                                    mesh_spec.LineWeight = CONE_LINE_WEIGHT;
+                                    mesh_spec.FillColor = CONE_FILL_COLOR;
+
+                                    ImPlot3D::PlotMesh(
+                                        "Cone ",
+                                        &mesh.verts.data()[0].x,
+                                        &mesh.verts.data()[0].y,
+                                        &mesh.verts.data()[0].z,
+                                        mesh.idxs.data(),
+                                        static_cast<unsigned int>(
+                                            mesh.verts.size()
+                                        ),
+                                        static_cast<unsigned int>(
+                                            mesh.idxs.size()
+                                        ),
+                                        mesh_spec
                                     );
                                 }
-                                ImPlot::EndPlot();
+                                ImPlot3D::EndPlot();
                             }
                             break;
                         case PLOT_ERR:

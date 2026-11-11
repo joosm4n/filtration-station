@@ -9,6 +9,7 @@
 #include <glm/gtx/string_cast.hpp>
 #include <glm/trigonometric.hpp>
 
+#include <format>
 #include <ranges>
 #include <span>
 #include <sstream>
@@ -41,6 +42,67 @@ struct Cone {
     float vec_len;
     float angle_rads = glm::radians(45.0f);
 
+    struct Mesh {
+        std::vector<glm::vec3> verts;
+        std::vector<unsigned int> idxs;
+    };
+
+    Mesh mesh;
+
+    static inline int NUM_ITERS = 20;
+
+    [[nodiscard]]
+    static inline auto reset_mesh(Cone* cone) {
+        // constexpr std::size_t NUM_ITERS = 20;V
+        float ITER_STEP = glm::two_pi<float>() / NUM_ITERS;
+        auto verts = std::vector<glm::vec3> {};
+        verts.reserve(NUM_ITERS + 1);
+
+        const auto& start = cone->start_position;
+        const auto& dir_vec = cone->vec_norm;
+        const auto lens = cone->vec_len / glm::cos(cone->angle_rads);
+        const auto perp = glm::cross(cone->vec_norm, glm::vec3 {-1, -1, -1});
+        const auto right_norm =
+            glm::rotate(cone->vec_norm, cone->angle_rads, perp) * lens;
+        const auto right = start + right_norm;
+
+        verts.emplace_back(start);
+        verts.emplace_back(right);
+        // printf(
+        //     "right: %s, right_norm: %s, lens: %f\n",
+        //     glm::to_string(right).c_str(),
+        //     glm::to_string(right_norm).c_str(),
+        //     lens
+        // );
+
+        float ang = 0.0f;
+        for (std::size_t i = 0; i <= NUM_ITERS; ++i) {
+            // rotate around x axis
+            const auto rotated = glm::rotate(right_norm, ang, dir_vec);
+            // printf("rotated: %s\n", glm::to_string(rotated).c_str());
+            const auto shifted = start + rotated;
+            // printf("shifted: %s\n", glm::to_string(rotated).c_str());
+            verts.push_back(shifted);
+            ang += ITER_STEP;
+        }
+
+        auto idxs = std::vector<unsigned int> {};
+        idxs.reserve(NUM_ITERS * 3);
+        for (unsigned int i = 0; i <= NUM_ITERS; ++i) {
+            idxs.push_back(0);
+            idxs.push_back(i + 1);
+            idxs.push_back(i + 2);
+        }
+
+        // printf("verts: \n");
+        // for (const auto& v : verts) {
+        //     printf("%s\n", glm::to_string(v).c_str());
+        // }
+        // printf("\n");
+
+        return Mesh {verts, idxs};
+    }
+
     inline void
     reset(const glm::vec3& start_point, const ::glm::vec3& end_point) {
         this->start_position = start_point;
@@ -50,6 +112,7 @@ struct Cone {
         this->raw_vector = v;
         this->vec_norm = glm::normalize(v);
         this->vec_len = glm::length(v);
+        this->mesh = reset_mesh(this);
     }
 
     Cone() = default;
@@ -85,6 +148,7 @@ struct Cone {
 
     inline void set_angle_degrees(float ang_degrees) {
         this->angle_rads = glm::radians(ang_degrees);
+        this->mesh = reset_mesh(this);
     }
 
     /*

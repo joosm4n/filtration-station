@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <ranges>
 #include <thread>
 
 using SimWorker = SimulationWorker<Params, Result, run_sim>;
@@ -251,6 +252,7 @@ int main() {
             ImGui::BeginChild("controls", ImVec2(340, 0));
             bool changed = false;
             bool ui_dirty = false;
+            static int bodies_in_cone = 0;
 
             const RunControls run_controls =
                 viewer.drawRunControls(auto_run, worker.busy());
@@ -473,6 +475,46 @@ int main() {
                     1,
                     Body::MAX_BODIES
                 );
+                constexpr float cone_v_speed = 10.0f;
+                constexpr float cone_v_min_max = 10000.0f;
+
+                bool cone_pos_changed = false;
+                auto start_pos = p.cone.start_position;
+                auto end_pos = p.cone.end_position;
+                cone_pos_changed |= ImGui::DragFloat3(
+                    "start_pos",
+                    glm::value_ptr(start_pos),
+                    cone_v_speed,
+                    -cone_v_min_max,
+                    cone_v_min_max
+                );
+                cone_pos_changed |= ImGui::DragFloat3(
+                    "end_pos",
+                    glm::value_ptr(end_pos),
+                    cone_v_speed,
+                    -cone_v_min_max,
+                    cone_v_min_max
+                );
+                if (cone_pos_changed) {
+                    p.cone.reset(start_pos, end_pos);
+                    changed = true;
+                }
+                float cone_ang = glm::degrees(p.cone.angle_rads);
+                if (ImGui::DragFloat(
+                        "cone angle (°)",
+                        &cone_ang,
+                        1.0f,
+                        0.0f,
+                        360.0f,
+                        "%.3f°",
+                        ImGuiSliderFlags_WrapAround
+                    )) {
+                    p.cone.set_angle_degrees(cone_ang);
+                    changed = true;
+                }
+                changed |= ImGui::Checkbox("use cone", &p.use_cone);
+                ImGui::Text("Num bodies in cone: %d", bodies_in_cone);
+
                 for (int b = 0; b < p.n_bodies; ++b) {
                     ImGui::PushID(b);
                     ImGui::PushStyleColor(ImGuiCol_Text, body_col(b));
@@ -522,6 +564,16 @@ int main() {
                 ImGui::MarkIniSettingsDirty();
                 if (!auto_run)
                     stale = true;
+
+                if (p.use_cone) {
+                    bodies_in_cone = 0;
+                    for (const auto& b : p.bodies) {
+                        if (p.cone.check_collision(
+                                glm::vec3 {b.x0, b.y0, b.z0}
+                            ))
+                            bodies_in_cone++;
+                    }
+                }
             }
             if (ui_dirty || run_controls.auto_run_changed)
                 ImGui::MarkIniSettingsDirty();
@@ -636,6 +688,28 @@ int main() {
                                         c,
                                         false
                                     );
+                                    if (p.use_cone) {
+                                        ImPlotSpec cone_spec {};
+                                        cone_spec.LineColor =
+                                            ImVec4 {1.0f, 0.0f, 0.0f, 0.5f};
+                                        cone_spec.LineWeight = 1.5f;
+                                        cone_spec.FillColor =
+                                            ImVec4 {1.0f, 1.0f, 1.0f, 0.2f};
+
+                                        const auto [cone_s, cone_r, cone_l] =
+                                            p.cone.get_bounds();
+                                        const float cone_xs[3] =
+                                            {cone_s.x, cone_r.x, cone_l.x};
+                                        const float cone_ys[3] =
+                                            {cone_s.y, cone_r.y, cone_l.y};
+                                        ImPlot::PlotPolygon(
+                                            "frustum cone",
+                                            cone_xs,
+                                            cone_ys,
+                                            3,
+                                            cone_spec
+                                        );
+                                    }
                                 }
                                 ImPlot::EndPlot();
                             }

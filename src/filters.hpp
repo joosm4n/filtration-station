@@ -218,6 +218,9 @@ struct Params {
     float sig_vr = 0.02f; // range rate [m/s]
     float sig_diam_frac = 0.05f; // fraction of true diameter
 
+    bool use_cone = false;
+    collision::Cone cone = collision::Cone();
+
     void seed_bodies() {
         int body_seed = this->seed + 1000;
         for (int i = 0; i < this->n_bodies; i++) {

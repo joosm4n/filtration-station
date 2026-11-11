@@ -1,11 +1,13 @@
 #pragma once
 
+#include <glm/gtc/type_ptr.hpp>
 #include <imgui.h>
 #include <imgui_internal.h>
 
 #include <algorithm>
 #include <cstring>
 
+#include "collision.hpp"
 #include "filters.hpp"
 // ---- plotting helpers ---------------------------------------------------------------------
 
@@ -97,6 +99,7 @@ static void visit_fields(AppState& s, F&& f) {
     f("sig_rc", p.sig_rc);
     f("sig_vr", p.sig_vr);
     f("sig_diam_frac", p.sig_diam_frac);
+    f("use_cone", p.use_cone);
 }
 
 static void put(ImGuiTextBuffer* o, const char* k, float v) {
@@ -110,6 +113,9 @@ static void put(ImGuiTextBuffer* o, const char* k, int v) {
 static void put(ImGuiTextBuffer* o, const char* k, bool v) {
     o->appendf("%s=%d\n", k, v ? 1 : 0);
 }
+
+// static void put(ImGuiTextBuffer* o, const char* k, const collision::Cone& v) {
+// }
 
 static void get(const char* s, float& v) {
     v = std::strtof(s, nullptr);
@@ -177,6 +183,30 @@ static void settings_line(
     const std::string key(line, eq - line);
     const char* val = eq + 1;
 
+    if (key == "cone") {
+        auto start_vec = glm::vec3 {};
+        auto end_vec = glm::vec3 {};
+        float cone_ang = 0.0f;
+
+        float* start_v = glm::value_ptr(start_vec);
+        float* end_v = glm::value_ptr(end_vec);
+        if (std::sscanf(
+                val,
+                collision::Cone::SERIALIZE_FMT_STR,
+                start_v + 0,
+                start_v + 1,
+                start_v + 2,
+                end_v + 0,
+                end_v + 1,
+                end_v + 2,
+                &cone_ang
+            )
+            == 7) {
+            s.p.cone.reset(start_vec, end_vec);
+            s.p.cone.angle_rads = cone_ang;
+        }
+    }
+
     if (key.rfind("bodyx", 0) == 0 && key.size() > 5 && std::isdigit(key[5])) {
         const int b = std::atoi(key.c_str() + 5);
         if (b >= 0 && b < Body::MAX_BODIES) {
@@ -231,6 +261,7 @@ settings_write(ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* out) {
     AppState& s = *static_cast<AppState*>(h->UserData);
     out->appendf("[%s][State]\n", h->TypeName);
     visit_fields(s, [&](const char* k, auto& v) { put(out, k, v); });
+    out->appendf("cone=%s\n", s.p.cone.serialize().c_str());
     for (int b = 0; b < Body::MAX_BODIES; ++b) {
         const Body& B = s.p.bodies[b];
         out->appendf(

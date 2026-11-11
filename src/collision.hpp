@@ -1,9 +1,18 @@
 #pragma once
 
+#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/ext/vector_float3.hpp>
 #include <glm/geometric.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/rotate_vector.hpp>
+#include <glm/gtx/string_cast.hpp>
 #include <glm/trigonometric.hpp>
+
+#include <ranges>
+#include <span>
+#include <sstream>
+#include <vector>
 
 /*
  * Plan:
@@ -19,7 +28,7 @@
  *      
  */
 
-namespace wso_stp {
+namespace collision {
 
 constexpr std::size_t AVERAGE_RUNTIME_SECS = 200; // approx
 constexpr std::size_t MAX_VELOCITY = 5; // approx (m/s)
@@ -47,6 +56,17 @@ struct Cone {
 
     Cone(const glm::vec3& start_point, const glm::vec3& end_point) {
         this->reset(start_point, end_point);
+    }
+
+    static constexpr const char* SERIALIZE_FMT_STR =
+        "vec3(%f,%f,%f),vec3(%f,%f,%f),%f";
+
+    inline std::string serialize() const {
+        std::stringstream s {};
+        s << glm::to_string(this->start_position) << ',';
+        s << glm::to_string(this->end_position) << ',';
+        s << this->angle_rads;
+        return s.str();
     }
 
     /*
@@ -87,6 +107,33 @@ struct Cone {
             glm::acos(dot / (glm::length(point_vec) * this->vec_len));
         return dot > 0.0f && ang < this->angle_rads;
     }
+
+    /*
+     * For man points finds whether the point lays within this cone.
+     *  This occurs when:
+     *      - dot product > 0.0
+     *      - ang_between cone vector and point vector is < half cone angle
+     */
+    inline auto check_collision_many(std::span<const glm::vec3> points) const {
+        return points | std::views::transform([&](const auto& p) {
+                   return this->check_collision(p);
+               });
+    }
+
+    /*
+     * Gives the 3 points for the bounds of the cone, (about the Z axis)
+     */
+    inline std::tuple<glm::vec3, glm::vec3, glm::vec3> get_bounds() const {
+        const auto right_norm = glm::rotateZ(this->vec_norm, this->angle_rads);
+        const auto left_norm = glm::rotateZ(this->vec_norm, -this->angle_rads);
+
+        const auto& start = this->start_position;
+        const auto lens = this->vec_len / glm::cos(this->angle_rads);
+        const auto right = start + (right_norm * lens);
+        const auto left = start + (left_norm * lens);
+
+        return std::tuple {start, right, left};
+    }
 };
 
-} // namespace wso_stp
+} // namespace collision

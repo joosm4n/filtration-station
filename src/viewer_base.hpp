@@ -70,7 +70,7 @@ class GenericViewer {
         printf("[loaded]\n");
         loaded();
 
-        printf("[main loop]");
+        printf("[main loop]\n");
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
             ImGui_ImplOpenGL3_NewFrame();

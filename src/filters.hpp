@@ -11,7 +11,6 @@
 #include "glm/ext/quaternion_geometric.hpp"
 #include "glm/ext/scalar_constants.hpp"
 #include "glm/geometric.hpp"
-#include "polyfit.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,6 +20,9 @@
 #include <random>
 #include <sys/stat.h>
 #include <vector>
+
+#include "collision.hpp"
+#include "polyfit.hpp"
 
 enum class FilterType : int { ABG = 0, KALMAN = 1, POLYFIT = 2 };
 enum class SignalType : int { SINE = 0, BODIES = 1 };

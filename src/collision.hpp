@@ -53,52 +53,73 @@ struct Cone {
 
     [[nodiscard]]
     static inline auto reset_mesh(Cone* cone) {
-        // constexpr std::size_t NUM_ITERS = 20;V
-        float ITER_STEP = glm::two_pi<float>() / NUM_ITERS;
+        // constexpr std::size_t NUM_ITERS = 20;
+        const float ITER_STEP =
+            glm::two_pi<float>() / static_cast<float>(NUM_ITERS);
         auto verts = std::vector<glm::vec3> {};
-        verts.reserve(NUM_ITERS + 1);
+        verts.reserve(NUM_ITERS + 2);
 
         const auto& start = cone->start_position;
         const auto& dir_vec = cone->vec_norm;
         const auto lens = cone->vec_len / glm::cos(cone->angle_rads);
         const auto perp = glm::cross(cone->vec_norm, glm::vec3 {-1, -1, -1});
-        const auto right_norm =
-            glm::rotate(cone->vec_norm, cone->angle_rads, perp) * lens;
-        const auto right = start + right_norm;
+        const auto right_vec =
+            lens * glm::rotate(cone->vec_norm, cone->angle_rads, perp);
 
         verts.emplace_back(start);
-        verts.emplace_back(right);
-        // printf(
-        //     "right: %s, right_norm: %s, lens: %f\n",
-        //     glm::to_string(right).c_str(),
-        //     glm::to_string(right_norm).c_str(),
-        //     lens
-        // );
 
         float ang = 0.0f;
-        for (std::size_t i = 0; i <= NUM_ITERS; ++i) {
+        while (ang < glm::two_pi<float>()) {
             // rotate around x axis
-            const auto rotated = glm::rotate(right_norm, ang, dir_vec);
-            // printf("rotated: %s\n", glm::to_string(rotated).c_str());
-            const auto shifted = start + rotated;
-            // printf("shifted: %s\n", glm::to_string(rotated).c_str());
-            verts.push_back(shifted);
+            const auto rotated = glm::rotate(right_vec, ang, dir_vec);
+            verts.push_back(start + (rotated / 2.0f));
+            verts.push_back(start + rotated);
             ang += ITER_STEP;
         }
 
         auto idxs = std::vector<unsigned int> {};
-        idxs.reserve(NUM_ITERS * 3);
-        for (unsigned int i = 0; i <= NUM_ITERS; ++i) {
-            idxs.push_back(0);
-            idxs.push_back(i + 1);
-            idxs.push_back(i + 2);
-        }
+        idxs.reserve(NUM_ITERS * 9);
+        {
+            auto i = 0;
+            for (int iter = 0; iter < NUM_ITERS - 1; ++iter) {
+                idxs.push_back(0);
+                idxs.push_back(i + 1);
+                idxs.push_back(i + 3);
 
-        // printf("verts: \n");
-        // for (const auto& v : verts) {
-        //     printf("%s\n", glm::to_string(v).c_str());
-        // }
-        // printf("\n");
+                idxs.push_back(i + 1);
+                idxs.push_back(i + 2);
+                idxs.push_back(i + 4);
+
+                idxs.push_back(i + 1);
+                idxs.push_back(i + 4);
+                idxs.push_back(i + 3);
+                i += 2;
+            }
+        }
+        auto v_len = static_cast<unsigned int>(verts.size());
+        idxs.push_back(0);
+        idxs.push_back(v_len - 2);
+        idxs.push_back(1);
+
+        idxs.push_back(v_len - 2);
+        idxs.push_back(v_len - 1);
+        idxs.push_back(2);
+
+        idxs.push_back(v_len - 2);
+        idxs.push_back(2);
+        idxs.push_back(1);
+
+        printf(
+            "ConeMesh {\n\tverts.size() = %zu,\n\tidxs.size() = %zu,\n}\n",
+            verts.size(),
+            idxs.size()
+        );
+        printf(
+            "ang: %f, NUM_ITERS: %d, ITER_STEP: %f\n",
+            ang,
+            NUM_ITERS,
+            ITER_STEP
+        );
 
         return Mesh {verts, idxs};
     }

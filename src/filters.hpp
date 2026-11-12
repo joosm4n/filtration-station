@@ -229,7 +229,7 @@ struct Params {
 
     void seed_bodies() {
         int body_seed = this->seed + 1000;
-        for (int i = 0; i < this->n_bodies; i++) {
+        for (size_t i = 0; i < this->bodies.size(); i++) {
             this->bodies.at(i).reset(body_seed + i);
         }
     }

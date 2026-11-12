@@ -540,7 +540,7 @@ int main() {
                     -cone_v_min_max,
                     cone_v_min_max
                 );
-                changed |= ImGui::SliderInt(
+                cone_pos_changed |= ImGui::SliderInt(
                     "NUM_ITERS",
                     &collision::Cone::NUM_ITERS,
                     0,
@@ -769,26 +769,26 @@ int main() {
                                             c,
                                             false
                                         );
-                                    if (p.use_cone) {
-                                        ImPlotSpec cone_spec {};
-                                        cone_spec.LineColor = CONE_LINE_COLOR;
-                                        cone_spec.LineWeight = CONE_LINE_WEIGHT;
-                                        cone_spec.FillColor = CONE_FILL_COLOR;
+                                }
+                                if (p.use_cone) {
+                                    ImPlotSpec cone_spec {};
+                                    cone_spec.LineColor = CONE_LINE_COLOR;
+                                    cone_spec.LineWeight = CONE_LINE_WEIGHT;
+                                    cone_spec.FillColor = CONE_FILL_COLOR;
 
-                                        const auto [cone_s, cone_r, cone_l] =
-                                            p.cone.get_bounds();
-                                        const float cone_xs[3] =
-                                            {cone_s.x, cone_r.x, cone_l.x};
-                                        const float cone_ys[3] =
-                                            {cone_s.y, cone_r.y, cone_l.y};
-                                        ImPlot::PlotPolygon(
-                                            "frustum cone",
-                                            cone_xs,
-                                            cone_ys,
-                                            3,
-                                            cone_spec
-                                        );
-                                    }
+                                    const auto [cone_s, cone_r, cone_l] =
+                                        p.cone.get_bounds();
+                                    const float cone_xs[3] =
+                                        {cone_s.x, cone_r.x, cone_l.x};
+                                    const float cone_ys[3] =
+                                        {cone_s.y, cone_r.y, cone_l.y};
+                                    ImPlot::PlotPolygon(
+                                        "frustum cone",
+                                        cone_xs,
+                                        cone_ys,
+                                        3,
+                                        cone_spec
+                                    );
                                 }
                                 ImPlot::EndPlot();
                             }

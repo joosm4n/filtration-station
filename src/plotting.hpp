@@ -35,7 +35,7 @@ static const char* kPlotTitle[PLOT_COUNT] = {
     "x-y path",
     "Position",
     "Velocity",
-    "3D Graph",
+    "Acceleration",
     "Forecast error vs look-ahead",
     "Average forecast accuracy"
 };
@@ -100,6 +100,13 @@ static void visit_fields(AppState& s, F&& f) {
     f("sig_vr", p.sig_vr);
     f("sig_diam_frac", p.sig_diam_frac);
     f("use_cone", p.use_cone);
+    f("draw_true", p.draw_true);
+    f("draw_meas", p.draw_meas);
+    f("draw_estimate", p.draw_estimate);
+    f("draw_forecast", p.draw_forecast);
+    f("draw_predicted_end", p.draw_predicted_end);
+    f("draw_true_end", p.draw_true_end);
+    f("draw_pos_at_t", p.draw_pos_at_t);
 }
 
 static void put(ImGuiTextBuffer* o, const char* k, float v) {

@@ -206,6 +206,7 @@ struct Params {
     float max_horizon = 3.0f; // right edge of the error-vs-look-ahead plot [s]
     float warmup = 1.0f; // ignore this much time at the start when scoring [s]
 
+    constexpr static int MAX_THREADS = 16;
     int threads =
         3; // max threads used to run bodies in parallel (including the caller)
 
@@ -220,6 +221,11 @@ struct Params {
 
     bool use_cone = false;
     collision::Cone cone = collision::Cone();
+
+    float show_body_time = 0.0f;
+    bool draw_true = true, draw_meas = true, draw_estimate = true,
+         draw_forecast = true, draw_predicted_end = true, draw_true_end = true,
+         draw_pos_at_t = true;
 
     void seed_bodies() {
         int body_seed = this->seed + 1000;
@@ -245,12 +251,17 @@ inline void clamp_params(Params& p) {
         p.filter = FilterType::ABG;
     if (p.signal != SignalType::SINE && p.signal != SignalType::BODIES)
         p.signal = SignalType::BODIES;
-    p.threads = std::clamp(p.threads, 1, std::max(1, static_cast<int>(16)));
+    p.threads = std::clamp(p.threads, 1, std::max(1, Params::MAX_THREADS));
     p.target = std::max(p.target, 0.0f);
     p.sig_pos = std::max(p.sig_pos, 0.0f);
     p.sig_rc = std::max(p.sig_rc, 0.0f);
     p.sig_vr = std::max(p.sig_vr, 0.0f);
     p.sig_diam_frac = std::max(p.sig_diam_frac, 0.0f);
+    p.show_body_time = std::clamp(
+        p.show_body_time,
+        0.0f,
+        p.duration
+    ); // maybe allow any limit later
 }
 
 inline constexpr int K_SWEEP_POINTS = 60;
@@ -374,6 +385,16 @@ struct Track {
     std::vector<float> m_rc, m_vr, m_d;
     // true values
     std::vector<float> t_rc, t_vr, t_d;
+
+    static inline glm::vec3 find_pos_at(
+        glm::vec3 init_pos,
+        glm::vec3 init_vel,
+        glm::vec3 acel,
+        float t
+    ) {
+        // s = s0 + ut + 1/2 * a * t^2
+        return init_pos + (init_vel * t) + (0.5f * acel * t * t);
+    }
 };
 
 struct Result {

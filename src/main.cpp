@@ -45,6 +45,30 @@ static void draw_line(
     ImPlot::PlotLine(label, xs, ys, n, spec);
 }
 
+static void draw_line_3d(
+    const char* label,
+    const float* xs,
+    const float* ys,
+    const float* zs,
+    int n,
+    const ImVec4& col,
+    bool dots,
+    float weight = 1.5f
+) {
+    if (n <= 0)
+        return;
+    ImPlot3DSpec spec;
+    spec.LineColor = col;
+    spec.LineWeight = weight;
+    if (dots) {
+        // spec.Marker = ImPlot3DMarker_Plus;
+        spec.MarkerSize = 3.0f;
+        spec.MarkerFillColor = col;
+        spec.MarkerLineColor = col;
+    }
+    ImPlot3D::PlotLine(label, xs, ys, zs, n, spec);
+}
+
 static void draw_line_lod(
     const char* label,
     const float* xs,
@@ -539,9 +563,31 @@ int main() {
                     p.cone.set_angle_degrees(cone_ang);
                     changed = true;
                 }
+                changed |= ImGui::SliderFloat(
+                    "body show time (s)",
+                    &p.show_body_time,
+                    0.0f,
+                    p.duration,
+                    "%.2f (s)"
+                );
 
                 changed |= ImGui::Checkbox("use cone", &p.use_cone);
                 ImGui::Text("Num bodies in cone: %d", bodies_in_cone);
+
+                ImGui::SeparatorText("Lines drawn");
+                changed |= ImGui::Checkbox("draw_true", &p.draw_true);
+                changed |= ImGui::Checkbox("draw_meas", &p.draw_meas);
+                ImGui::SameLine();
+                changed |= ImGui::Checkbox("draw_estimate", &p.draw_estimate);
+                changed |= ImGui::Checkbox("draw_forecast", &p.draw_forecast);
+                ImGui::SameLine();
+                changed |= ImGui::Checkbox(
+                    "draw_predicted_end",
+                    &p.draw_predicted_end
+                );
+                changed |= ImGui::Checkbox("draw_true_end", &p.draw_true_end);
+                ImGui::SameLine();
+                changed |= ImGui::Checkbox("draw_pos_at_t", &p.draw_pos_at_t);
 
                 for (int b = 0; b < p.n_bodies; ++b) {
                     ImGui::PushID(b);
@@ -669,54 +715,60 @@ int main() {
                                         continue;
                                     const Track& k = result.tracks[b];
                                     const ImVec4 c = body_col(b);
-                                    draw_line_lod(
-                                        L("true", b),
-                                        k.tx_ext.data(),
-                                        k.ty_ext.data(),
-                                        (int)k.tx_ext.size(),
-                                        kColActual,
-                                        false,
-                                        1.0f
-                                    );
-                                    draw_crosses_lod(
-                                        L("meas", b),
-                                        k.zx.data(),
-                                        k.zy.data(),
-                                        m,
-                                        kColMeas,
-                                        fit
-                                    );
-                                    draw_line_lod(
-                                        L("estimate", b),
-                                        k.fx->x_k.data(),
-                                        k.fy->x_k.data(),
-                                        n,
-                                        c,
-                                        true
-                                    );
-                                    draw_line_lod(
-                                        L("forecast", b),
-                                        k.px.data(),
-                                        k.py.data(),
-                                        (int)k.px.size(),
-                                        faded(c),
-                                        false,
-                                        1.0f
-                                    );
-                                    draw_marker(
-                                        L("predicted end", b),
-                                        &k.fut_x,
-                                        &k.fut_y,
-                                        c,
-                                        true
-                                    );
-                                    draw_marker(
-                                        L("true end", b),
-                                        &k.fut_tx,
-                                        &k.fut_ty,
-                                        c,
-                                        false
-                                    );
+                                    if (p.draw_true)
+                                        draw_line_lod(
+                                            L("true", b),
+                                            k.tx_ext.data(),
+                                            k.ty_ext.data(),
+                                            (int)k.tx_ext.size(),
+                                            kColActual,
+                                            false,
+                                            1.0f
+                                        );
+                                    if (p.draw_meas)
+                                        draw_crosses_lod(
+                                            L("meas", b),
+                                            k.zx.data(),
+                                            k.zy.data(),
+                                            m,
+                                            kColMeas,
+                                            fit
+                                        );
+                                    if (p.draw_estimate)
+                                        draw_line_lod(
+                                            L("estimate", b),
+                                            k.fx->x_k.data(),
+                                            k.fy->x_k.data(),
+                                            n,
+                                            c,
+                                            true
+                                        );
+                                    if (p.draw_forecast)
+                                        draw_line_lod(
+                                            L("forecast", b),
+                                            k.px.data(),
+                                            k.py.data(),
+                                            (int)k.px.size(),
+                                            faded(c),
+                                            false,
+                                            1.0f
+                                        );
+                                    if (p.draw_predicted_end)
+                                        draw_marker(
+                                            L("predicted end", b),
+                                            &k.fut_x,
+                                            &k.fut_y,
+                                            c,
+                                            true
+                                        );
+                                    if (p.draw_true_end)
+                                        draw_marker(
+                                            L("true end", b),
+                                            &k.fut_tx,
+                                            &k.fut_ty,
+                                            c,
+                                            false
+                                        );
                                     if (p.use_cone) {
                                         ImPlotSpec cone_spec {};
                                         cone_spec.LineColor = CONE_LINE_COLOR;
@@ -753,58 +805,64 @@ int main() {
                                         continue;
                                     const Track& k = result.tracks[b];
                                     const ImVec4 c = body_col(b);
-                                    draw_line_lod(
-                                        L("x true", b),
-                                        t + 1,
-                                        k.tx.data(),
-                                        m,
-                                        kColActual,
-                                        false,
-                                        1.0f
-                                    );
-                                    draw_line_lod(
-                                        L("y true", b),
-                                        t + 1,
-                                        k.ty.data(),
-                                        m,
-                                        kColActual,
-                                        false,
-                                        1.0f
-                                    );
-                                    draw_line_lod(
-                                        L("x", b),
-                                        t,
-                                        k.fx->x_k.data(),
-                                        n,
-                                        c,
-                                        true
-                                    );
-                                    draw_line_lod(
-                                        L("y", b),
-                                        t,
-                                        k.fy->x_k.data(),
-                                        n,
-                                        dim(c),
-                                        true
-                                    );
-                                    draw_line_lod(
-                                        L("x forecast", b),
-                                        k.pt.data(),
-                                        k.px.data(),
-                                        (int)k.px.size(),
-                                        faded(c),
-                                        false,
-                                        1.0f
-                                    );
-                                    draw_line_lod(
-                                        L("y forecast", b),
-                                        k.pt.data(),
-                                        k.py.data(),
-                                        (int)k.py.size(),
-                                        faded(dim(c)),
-                                        false,
-                                        1.0f
-                                    );
+                                    if (p.draw_true)
+                                        draw_line_lod(
+                                            L("x true", b),
+                                            t + 1,
+                                            k.tx.data(),
+                                            m,
+                                            kColActual,
+                                            false,
+                                            1.0f
+                                        );
+                                    if (p.draw_true)
+                                        draw_line_lod(
+                                            L("y true", b),
+                                            t + 1,
+                                            k.ty.data(),
+                                            m,
+                                            kColActual,
+                                            false,
+                                            1.0f
+                                        );
+                                    if (p.draw_estimate)
+                                        draw_line_lod(
+                                            L("x", b),
+                                            t,
+                                            k.fx->x_k.data(),
+                                            n,
+                                            c,
+                                            true
+                                        );
+                                    if (p.draw_estimate)
+                                        draw_line_lod(
+                                            L("y", b),
+                                            t,
+                                            k.fy->x_k.data(),
+                                            n,
+                                            dim(c),
+                                            true
+                                        );
+                                    if (p.draw_forecast)
+                                        draw_line_lod(
+                                            L("x forecast", b),
+                                            k.pt.data(),
+                                            k.px.data(),
+                                            (int)k.px.size(),
+                                            faded(c),
+                                            false,
+                                            1.0f
+                                        );
+                                    if (p.draw_forecast)
+                                        draw_line_lod(
+                                            L("y forecast", b),
+                                            k.pt.data(),
+                                            k.py.data(),
+                                            (int)k.py.size(),
+                                            faded(dim(c)),
+                                            false,
+                                            1.0f
+                                        );
                                 }
                                 ImPlot::EndPlot();
                             }
@@ -821,40 +879,44 @@ int main() {
                                         continue;
                                     const Track& k = result.tracks[b];
                                     const ImVec4 c = body_col(b);
-                                    draw_line_lod(
-                                        L("x true", b),
-                                        t + 1,
-                                        k.tvx.data(),
-                                        m,
-                                        kColActual,
-                                        false,
-                                        1.0f
-                                    );
-                                    draw_line_lod(
-                                        L("y true", b),
-                                        t + 1,
-                                        k.tvy.data(),
-                                        m,
-                                        kColActual,
-                                        false,
-                                        1.0f
-                                    );
-                                    draw_line_lod(
-                                        L("x", b),
-                                        t,
-                                        k.fx->v_k.data(),
-                                        n,
-                                        c,
-                                        true
-                                    );
-                                    draw_line_lod(
-                                        L("y", b),
-                                        t,
-                                        k.fy->v_k.data(),
-                                        n,
-                                        dim(c),
-                                        true
-                                    );
+                                    if (p.draw_true)
+                                        draw_line_lod(
+                                            L("x true", b),
+                                            t + 1,
+                                            k.tvx.data(),
+                                            m,
+                                            kColActual,
+                                            false,
+                                            1.0f
+                                        );
+                                    if (p.draw_true)
+                                        draw_line_lod(
+                                            L("y true", b),
+                                            t + 1,
+                                            k.tvy.data(),
+                                            m,
+                                            kColActual,
+                                            false,
+                                            1.0f
+                                        );
+                                    if (p.draw_estimate)
+                                        draw_line_lod(
+                                            L("x", b),
+                                            t,
+                                            k.fx->v_k.data(),
+                                            n,
+                                            c,
+                                            true
+                                        );
+                                    if (p.draw_estimate)
+                                        draw_line_lod(
+                                            L("y", b),
+                                            t,
+                                            k.fy->v_k.data(),
+                                            n,
+                                            dim(c),
+                                            true
+                                        );
                                 }
                                 ImPlot::EndPlot();
                             }
@@ -875,14 +937,69 @@ int main() {
                                         continue;
                                     const Track& k = result.tracks[b];
                                     const ImVec4 c = body_col(b);
-                                    draw_marker_3d(
-                                        L("pos", b),
-                                        &k.fut_x,
-                                        &k.fut_y,
-                                        &k.fut_z,
-                                        c,
-                                        true
-                                    );
+                                    if (p.draw_predicted_end)
+                                        draw_marker_3d(
+                                            L("predicted final pos", b),
+                                            &k.fut_x,
+                                            &k.fut_y,
+                                            &k.fut_z,
+                                            c,
+                                            true
+                                        );
+                                    if (p.draw_true_end)
+                                        draw_marker_3d(
+                                            L("true final pos", b),
+                                            &k.fut_tx,
+                                            &k.fut_ty,
+                                            &k.fut_tz,
+                                            c,
+                                            false
+                                        );
+
+                                    static bool msg_toggle = true;
+                                    if (!k.tx_ext.empty()) {
+                                        const auto init_pos = glm::vec3 {
+                                            k.tx_ext[0],
+                                            k.ty_ext[0],
+                                            k.tz_ext[0]
+                                        };
+                                        const auto init_vel = glm::vec3 {
+                                            k.tvx[0],
+                                            k.tvy[0],
+                                            k.tvz[0]
+                                        };
+                                        const auto accel = glm::vec3 {};
+                                        const auto bpos = Track::find_pos_at(
+                                            init_pos,
+                                            init_vel,
+                                            accel,
+                                            p.show_body_time
+                                        );
+                                        if (p.draw_pos_at_t)
+                                            draw_marker_3d(
+                                                L("pos_at t", b),
+                                                &bpos.x,
+                                                &bpos.y,
+                                                &bpos.z,
+                                                c,
+                                                false
+                                            );
+
+                                        if (p.draw_true)
+                                            draw_line_3d(
+                                                "true_pos",
+                                                k.tx_ext.data(),
+                                                k.ty_ext.data(),
+                                                k.tz_ext.data(),
+                                                nt,
+                                                c,
+                                                false
+                                            );
+                                        msg_toggle = true;
+                                    } else if (msg_toggle) {
+                                        msg_toggle = false;
+                                        printf("[warn] k.tx_ext.empty()\n");
+                                    }
                                 }
                                 if (p.use_cone) {
                                     const auto& mesh = p.cone.mesh;

@@ -260,7 +260,7 @@ inline void clamp_params(Params& p) {
     p.show_body_time = std::clamp(
         p.show_body_time,
         0.0f,
-        p.duration
+        p.horizon
     ); // maybe allow any limit later
 }
 

@@ -567,7 +567,7 @@ int main() {
                     "body show time (s)",
                     &p.show_body_time,
                     0.0f,
-                    p.duration,
+                    p.horizon,
                     "%.2f (s)"
                 );
 

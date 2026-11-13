@@ -171,18 +171,63 @@ static void draw_crosses_lod(
     draw_crosses(label, bx.data(), by.data(), (int)bx.size(), col);
 }
 
-static ImVec4 body_col(int b) {
-    static const ImVec4 pal[Body::MAX_BODIES] = {
-        {0.30f, 0.62f, 0.95f, 1},
-        {1.00f, 0.55f, 0.20f, 1},
-        {0.30f, 0.85f, 0.50f, 1},
-        {0.85f, 0.40f, 0.90f, 1},
-        {0.95f, 0.85f, 0.30f, 1},
-        {0.35f, 0.85f, 0.90f, 1},
-        {0.95f, 0.45f, 0.45f, 1},
-        {0.70f, 0.70f, 0.95f, 1}
-    };
-    return pal[b % Body::MAX_BODIES];
+namespace color_table_detail {
+
+constexpr double frac(double x) { // x >= 0
+    return x - static_cast<double>(static_cast<long long>(x));
+}
+
+constexpr ImVec4 hsvToRgba(double h, double s, double v, double a) {
+    const double h6 = frac(h) * 6.0;
+    const int i = static_cast<int>(h6);
+    const double f = h6 - i;
+    const float p = static_cast<float>(v * (1.0 - s));
+    const float q = static_cast<float>(v * (1.0 - s * f));
+    const float t = static_cast<float>(v * (1.0 - s * (1.0 - f)));
+    const float V = static_cast<float>(v);
+    const float A = static_cast<float>(a);
+
+    switch (i % 6) {
+        case 0:
+            return {V, t, p, A};
+        case 1:
+            return {q, V, p, A};
+        case 2:
+            return {p, V, t, A};
+        case 3:
+            return {p, q, V, A};
+        case 4:
+            return {t, p, V, A};
+        default:
+            return {V, p, q, A};
+    }
+}
+
+constexpr ImVec4 indexToColor(int index, float alpha) {
+    constexpr double kGoldenRatioConjugate = 0.6180339887498949;
+    constexpr double kSat[3] = {0.95, 0.70, 0.85};
+    constexpr double kVal[4] = {1.00, 0.80, 0.65, 0.90};
+
+    const double hue = frac(index * kGoldenRatioConjugate);
+    return hsvToRgba(hue, kSat[index % 3], kVal[index % 4], alpha);
+}
+
+constexpr auto NUM_COLORS = Body::MAX_BODIES;
+
+constexpr std::array<ImVec4, NUM_COLORS> makeColorTable(float alpha = 1.0f) {
+    std::array<ImVec4, NUM_COLORS> table {};
+    for (std::size_t i = 0; i < NUM_COLORS; ++i) {
+        table[i] = color_table_detail::indexToColor(static_cast<int>(i), alpha);
+    }
+    return table;
+}
+
+inline constexpr std::array<ImVec4, NUM_COLORS> BODY_COLORS = makeColorTable();
+
+} // namespace color_table_detail
+
+static constexpr ImVec4 body_col(int b) {
+    return color_table_detail::BODY_COLORS[b];
 }
 
 static ImVec4 dim(ImVec4 c) {
@@ -228,6 +273,23 @@ static void draw_marker_3d(
     ImPlot3D::PlotScatter(label, x, y, z, 1, spec);
 }
 
+static void draw_markers_3d(
+    const char* label,
+    const float* x,
+    const float* y,
+    const float* z,
+    const int count,
+    const ImVec4& col,
+    bool filled
+) {
+    ImPlot3DSpec spec;
+    spec.Marker = filled ? ImPlotMarker_Diamond : ImPlotMarker_Circle;
+    spec.MarkerSize = 9.0f;
+    spec.MarkerFillColor = filled ? col : ImVec4(0, 0, 0, 0);
+    spec.MarkerLineColor = col;
+    ImPlot3D::PlotScatter(label, x, y, z, count, spec);
+}
+
 int main() {
     printf("-- Starting Filtration Station -- \n");
     AppState st;
@@ -249,7 +311,7 @@ int main() {
     bool& show_avg = st.show_avg;
     bool& show_grid = st.show_grid;
     bool& auto_run = st.auto_run;
-    bool (&show_body)[Body::MAX_BODIES] = st.show_body;
+    auto& show_body = st.show_body;
     std::vector<int>& order = st.order;
 
     p.seed_bodies();
@@ -649,13 +711,19 @@ int main() {
 
                 if (p.use_cone) {
                     bodies_in_cone = 0;
-                    for (const auto& b : p.bodies) {
+                    for (int i = 0; i < p.n_bodies; ++i) {
+                        if (!show_body[i])
+                            continue;
+
+                        const auto& b = p.bodies[i];
                         if (p.cone.check_collision(
                                 glm::vec3 {b.x0, b.y0, b.z0}
                             ))
                             bodies_in_cone++;
                     }
                 }
+                show_body.fill(false);
+                std::fill_n(show_body.data(), p.n_bodies, true);
             }
             if (ui_dirty || run_controls.auto_run_changed)
                 ImGui::MarkIniSettingsDirty();
@@ -708,13 +776,8 @@ int main() {
                     if (fit)
                         ImPlot::SetNextAxesToFit();
                     const ImPlotFlags base = ImPlotFlags_NoTitle;
-                    const ImPlot3DFlags base_3d = ImPlotFlags_NoTitle;
+                    const ImPlot3DFlags base_3d = ImPlot3DFlags_NoTitle;
                     const int nt = static_cast<int>(result.tracks.size());
-                    char lab[48];
-                    auto L = [&](const char* s, int b) {
-                        std::snprintf(lab, sizeof lab, "b%d %s", b, s);
-                        return static_cast<const char*>(lab);
-                    };
 
                     switch (id) {
                         case PLOT_XY:
@@ -731,7 +794,7 @@ int main() {
                                     const ImVec4 c = body_col(b);
                                     if (p.draw_true)
                                         draw_line_lod(
-                                            L("true", b),
+                                            "true",
                                             k.tx_ext.data(),
                                             k.ty_ext.data(),
                                             (int)k.tx_ext.size(),
@@ -741,7 +804,7 @@ int main() {
                                         );
                                     if (p.draw_meas)
                                         draw_crosses_lod(
-                                            L("meas", b),
+                                            "meas",
                                             k.zx.data(),
                                             k.zy.data(),
                                             m,
@@ -750,7 +813,7 @@ int main() {
                                         );
                                     if (p.draw_estimate)
                                         draw_line_lod(
-                                            L("estimate", b),
+                                            "estimate",
                                             k.fx->x_k.data(),
                                             k.fy->x_k.data(),
                                             n,
@@ -759,7 +822,7 @@ int main() {
                                         );
                                     if (p.draw_forecast)
                                         draw_line_lod(
-                                            L("forecast", b),
+                                            "forecast",
                                             k.px.data(),
                                             k.py.data(),
                                             (int)k.px.size(),
@@ -769,7 +832,7 @@ int main() {
                                         );
                                     if (p.draw_predicted_end)
                                         draw_marker(
-                                            L("predicted end", b),
+                                            "predicted end",
                                             &k.fut_x,
                                             &k.fut_y,
                                             c,
@@ -777,7 +840,7 @@ int main() {
                                         );
                                     if (p.draw_true_end)
                                         draw_marker(
-                                            L("true end", b),
+                                            "true end",
                                             &k.fut_tx,
                                             &k.fut_ty,
                                             c,
@@ -821,7 +884,7 @@ int main() {
                                     const ImVec4 c = body_col(b);
                                     if (p.draw_true)
                                         draw_line_lod(
-                                            L("x true", b),
+                                            "x true",
                                             t + 1,
                                             k.tx.data(),
                                             m,
@@ -831,7 +894,7 @@ int main() {
                                         );
                                     if (p.draw_true)
                                         draw_line_lod(
-                                            L("y true", b),
+                                            "y true",
                                             t + 1,
                                             k.ty.data(),
                                             m,
@@ -841,7 +904,7 @@ int main() {
                                         );
                                     if (p.draw_estimate)
                                         draw_line_lod(
-                                            L("x", b),
+                                            "x",
                                             t,
                                             k.fx->x_k.data(),
                                             n,
@@ -850,7 +913,7 @@ int main() {
                                         );
                                     if (p.draw_estimate)
                                         draw_line_lod(
-                                            L("y", b),
+                                            "y",
                                             t,
                                             k.fy->x_k.data(),
                                             n,
@@ -859,7 +922,7 @@ int main() {
                                         );
                                     if (p.draw_forecast)
                                         draw_line_lod(
-                                            L("x forecast", b),
+                                            "x forecast",
                                             k.pt.data(),
                                             k.px.data(),
                                             (int)k.px.size(),
@@ -869,7 +932,7 @@ int main() {
                                         );
                                     if (p.draw_forecast)
                                         draw_line_lod(
-                                            L("y forecast", b),
+                                            "y forecast",
                                             k.pt.data(),
                                             k.py.data(),
                                             (int)k.py.size(),
@@ -895,7 +958,7 @@ int main() {
                                     const ImVec4 c = body_col(b);
                                     if (p.draw_true)
                                         draw_line_lod(
-                                            L("x true", b),
+                                            "x true",
                                             t + 1,
                                             k.tvx.data(),
                                             m,
@@ -905,7 +968,7 @@ int main() {
                                         );
                                     if (p.draw_true)
                                         draw_line_lod(
-                                            L("y true", b),
+                                            "y true",
                                             t + 1,
                                             k.tvy.data(),
                                             m,
@@ -915,7 +978,7 @@ int main() {
                                         );
                                     if (p.draw_estimate)
                                         draw_line_lod(
-                                            L("x", b),
+                                            "x",
                                             t,
                                             k.fx->v_k.data(),
                                             n,
@@ -924,7 +987,7 @@ int main() {
                                         );
                                     if (p.draw_estimate)
                                         draw_line_lod(
-                                            L("y", b),
+                                            "y",
                                             t,
                                             k.fy->v_k.data(),
                                             n,
@@ -942,9 +1005,6 @@ int main() {
                                     base_3d
                                 )) {
                                 ImPlot3D::SetupAxes("x", "y", "z");
-                                // std::array<float, Body::MAX_BODIES> xs_3d {};
-                                // std::array<float, Body::MAX_BODIES> ys_3d {};
-                                // std::array<float, Body::MAX_BODIES> zs_3d {};
 
                                 for (int b = 0; b < nt; ++b) {
                                     if (!show_body[b])
@@ -953,7 +1013,7 @@ int main() {
                                     const ImVec4 c = body_col(b);
                                     if (p.draw_predicted_end)
                                         draw_marker_3d(
-                                            L("predicted final pos", b),
+                                            "predicted final pos",
                                             &k.fut_x,
                                             &k.fut_y,
                                             &k.fut_z,
@@ -962,7 +1022,7 @@ int main() {
                                         );
                                     if (p.draw_true_end)
                                         draw_marker_3d(
-                                            L("true final pos", b),
+                                            "true final pos",
                                             &k.fut_tx,
                                             &k.fut_ty,
                                             &k.fut_tz,
@@ -970,7 +1030,6 @@ int main() {
                                             false
                                         );
 
-                                    static bool msg_toggle = true;
                                     if (!k.tx_ext.empty()) {
                                         const auto init_pos = glm::vec3 {
                                             k.tx_ext[0],
@@ -991,7 +1050,7 @@ int main() {
                                         );
                                         if (p.draw_pos_at_t)
                                             draw_marker_3d(
-                                                L("pos_at t", b),
+                                                "pos_at t secs",
                                                 &bpos.x,
                                                 &bpos.y,
                                                 &bpos.z,
@@ -1005,14 +1064,10 @@ int main() {
                                                 k.tx_ext.data(),
                                                 k.ty_ext.data(),
                                                 k.tz_ext.data(),
-                                                nt,
+                                                (int)k.tx_ext.size(),
                                                 c,
                                                 false
                                             );
-                                        msg_toggle = true;
-                                    } else if (msg_toggle) {
-                                        msg_toggle = false;
-                                        printf("[warn] k.tx_ext.empty()\n");
                                     }
                                 }
                                 if (p.use_cone) {
@@ -1056,7 +1111,7 @@ int main() {
                                     const Track& k = result.tracks[b];
                                     const ImVec4 c = body_col(b);
                                     draw_line_lod(
-                                        L("x RMS", b),
+                                        "x RMS",
                                         result.sweep_h.data(),
                                         k.rms_x.data(),
                                         ns,
@@ -1064,7 +1119,7 @@ int main() {
                                         false
                                     );
                                     draw_line_lod(
-                                        L("y RMS", b),
+                                        "y RMS",
                                         result.sweep_h.data(),
                                         k.rms_y.data(),
                                         ns,
@@ -1073,7 +1128,7 @@ int main() {
                                     );
                                     if (!k.sig_x.empty())
                                         draw_line_lod(
-                                            L("x sigma", b),
+                                            "x sigma",
                                             result.sweep_h.data(),
                                             k.sig_x.data(),
                                             ns,
@@ -1109,7 +1164,7 @@ int main() {
                                         continue;
                                     const Track& k = result.tracks[b];
                                     draw_line_lod(
-                                        L("err", b),
+                                        "err",
                                         t + 1,
                                         k.err.data(),
                                         m,

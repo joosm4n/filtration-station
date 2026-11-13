@@ -46,7 +46,7 @@ struct AppState {
     Params p;
     bool show_xy = true, show_pos = true, show_vel = true, show_acc = true;
     bool show_err = true, show_avg = true, show_grid = true, auto_run = false;
-    bool show_body[Body::MAX_BODIES];
+    std::array<bool, Body::MAX_BODIES> show_body;
     std::vector<int> order {
         PLOT_XY,
         PLOT_POS,
@@ -61,7 +61,7 @@ struct AppState {
     float window_height = 900.0f;
 
     AppState() {
-        std::fill_n(show_body, Body::MAX_BODIES, true);
+        show_body.fill(true);
     }
 };
 
@@ -219,8 +219,8 @@ static void settings_line(
                 &cone_ang
             )
             == 7) {
-            s.p.cone.reset(start_vec, end_vec);
             s.p.cone.angle_rads = cone_ang;
+            s.p.cone.reset(start_vec, end_vec);
         }
     }
 

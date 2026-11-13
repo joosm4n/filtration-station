@@ -16,6 +16,7 @@
 #include <array>
 #include <ctime>
 #include <glm/glm.hpp>
+#include <limits>
 #include <memory>
 #include <random>
 #include <sys/stat.h>
@@ -229,8 +230,10 @@ struct Params {
 
     void seed_bodies() {
         int body_seed = this->seed + 1000;
+        std::mt19937 gen(body_seed + 1);
+        std::uniform_int_distribution<int> dis(0);
         for (size_t i = 0; i < this->bodies.size(); i++) {
-            this->bodies.at(i).reset(body_seed + i);
+            this->bodies.at(i).reset(dis(gen));
         }
     }
 };

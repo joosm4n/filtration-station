@@ -247,6 +247,7 @@ int main() {
     bool& show_acc = st.show_acc;
     bool& show_err = st.show_err;
     bool& show_avg = st.show_avg;
+    bool& show_grid = st.show_grid;
     bool& auto_run = st.auto_run;
     bool (&show_body)[Body::MAX_BODIES] = st.show_body;
     std::vector<int>& order = st.order;
@@ -323,6 +324,12 @@ int main() {
                     static_cast<int>(result.tracks.size())
                 );
             }
+            static std::array<float, 64> frame_avgs;
+            static int frame_idx = 0;
+            frame_avgs[frame_idx++ % frame_avgs.size()] =
+                ImGui::GetIO().Framerate;
+            auto fps = array_misc::mean<float, 64>(frame_avgs);
+            ImGui::TextDisabled("frame_rate: %.0f", fps);
 
             if (stale)
                 ImGui::TextColored(
@@ -342,6 +349,7 @@ int main() {
             ui_dirty |= ImGui::Checkbox("look-ahead error", &show_err);
             ImGui::SameLine();
             ui_dirty |= ImGui::Checkbox("avg accuracy", &show_avg);
+            ui_dirty |= ImGui::Checkbox("grid/heatmap", &show_grid);
 
             ImGui::SeparatorText("Filter type");
             changed |= ImGui::RadioButton(
@@ -671,15 +679,21 @@ int main() {
             // ---------------- plots (right) ----------------
             ImGui::SameLine();
             ImGui::BeginChild("plots", ImVec2(0, 0));
-
             if (!have_result) {
                 if (worker.busy())
                     ImGui::TextDisabled("computing...");
                 else
                     ImGui::TextDisabled("No results yet. Press Run.");
             } else {
-                const bool vis[PLOT_COUNT] =
-                    {show_xy, show_pos, show_vel, show_acc, show_err, show_avg};
+                const bool vis[PLOT_COUNT] = {
+                    show_xy,
+                    show_pos,
+                    show_vel,
+                    show_acc,
+                    show_err,
+                    show_avg,
+                    show_grid
+                };
 
                 const Track& k0 = result.tracks.front();
                 const int n = static_cast<int>(
@@ -1128,6 +1142,23 @@ int main() {
                                     kColFcast,
                                     false,
                                     2.0f
+                                );
+                                ImPlot::EndPlot();
+                            }
+                            break;
+                        case PLOT_GRID:
+                            if (ImPlot::BeginPlot(
+                                    "##grid",
+                                    ImVec2(-1, -1),
+                                    base
+                                )) {
+                                ImPlot::SetupAxes("x", "y");
+                                auto thing = collision::Mask::get_thing();
+                                ImPlot::PlotHeatmap(
+                                    "Heatmap",
+                                    thing.data(),
+                                    thing.num_rows<int>(),
+                                    thing.num_cols<int>()
                                 );
                                 ImPlot::EndPlot();
                             }

@@ -28,6 +28,7 @@ enum PlotId {
     PLOT_ACC,
     PLOT_ERR,
     PLOT_AVG,
+    PLOT_GRID,
     PLOT_COUNT
 };
 
@@ -37,16 +38,24 @@ static const char* kPlotTitle[PLOT_COUNT] = {
     "Velocity",
     "Acceleration",
     "Forecast error vs look-ahead",
-    "Average forecast accuracy"
+    "Average forecast accuracy",
+    "Heatmap"
 };
 
 struct AppState {
     Params p;
     bool show_xy = true, show_pos = true, show_vel = true, show_acc = true;
-    bool show_err = true, show_avg = true, auto_run = false;
+    bool show_err = true, show_avg = true, show_grid = true, auto_run = false;
     bool show_body[Body::MAX_BODIES];
-    std::vector<int>
-        order {PLOT_XY, PLOT_POS, PLOT_VEL, PLOT_ACC, PLOT_ERR, PLOT_AVG};
+    std::vector<int> order {
+        PLOT_XY,
+        PLOT_POS,
+        PLOT_VEL,
+        PLOT_ACC,
+        PLOT_ERR,
+        PLOT_AVG,
+        PLOT_GRID
+    };
 
     float window_width = 1600.0f;
     float window_height = 900.0f;
@@ -91,6 +100,7 @@ static void visit_fields(AppState& s, F&& f) {
     f("show_acc", s.show_acc);
     f("show_err", s.show_err);
     f("show_avg", s.show_avg);
+    f("show_grid", s.show_grid);
     f("auto_run", s.auto_run);
     f("threads", p.threads);
     f("target", p.target);

@@ -1,5 +1,10 @@
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <sys/types.h>
+
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/ext/vector_float3.hpp>
 #include <glm/geometric.hpp>
@@ -14,6 +19,8 @@
 #include <span>
 #include <sstream>
 #include <vector>
+
+#include "nd_array.hpp"
 
 /*
  * Plan:
@@ -30,6 +37,12 @@
  */
 
 namespace collision {
+
+inline float vec_angle(const glm::vec3& a, const glm::vec3& b) {
+    const auto dot = glm::dot(a, b);
+    const auto ang = glm::acos(dot / (glm::length(a) * glm::length(b)));
+    return ang;
+}
 
 constexpr std::size_t AVERAGE_RUNTIME_SECS = 200; // approx
 constexpr std::size_t MAX_VELOCITY = 5; // approx (m/s)
@@ -50,6 +63,7 @@ struct Cone {
     Mesh mesh;
 
     static inline int NUM_ITERS = 20;
+    void do_thing() const;
 
     [[nodiscard]]
     static inline auto reset_mesh(Cone* cone) {
@@ -108,18 +122,6 @@ struct Cone {
         idxs.push_back(v_len - 2);
         idxs.push_back(2);
         idxs.push_back(1);
-
-        printf(
-            "ConeMesh {\n\tverts.size() = %zu,\n\tidxs.size() = %zu,\n}\n",
-            verts.size(),
-            idxs.size()
-        );
-        printf(
-            "ang: %f, NUM_ITERS: %d, ITER_STEP: %f\n",
-            ang,
-            NUM_ITERS,
-            ITER_STEP
-        );
 
         return Mesh {verts, idxs};
     }
@@ -218,6 +220,85 @@ struct Cone {
         const auto left = start + (left_norm * lens);
 
         return std::tuple {start, right, left};
+    }
+};
+
+struct Mask {
+    using index_type = std::uint32_t;
+    static constexpr std::size_t RESOLUTION = 1000;
+    static constexpr std::size_t HALF_RES = RESOLUTION / 2;
+    static constexpr float RESOLUTION_F = static_cast<float>(RESOLUTION);
+    static constexpr float HALF_RES_F = static_cast<float>(HALF_RES);
+    static_assert(
+        RESOLUTION * RESOLUTION < std::numeric_limits<index_type>::max()
+    );
+    nd_array<index_type, RESOLUTION> mask;
+
+    Mask() = default;
+
+    inline void draw_object_over(
+        const glm::vec3& ship_pos,
+        const glm::vec3& target_pos,
+        const glm::vec3& obj_pos,
+        float radius
+    ) {
+        auto dir_vec = target_pos - ship_pos;
+        auto obj_vec = obj_pos - ship_pos;
+        auto dist_vec = obj_vec - dir_vec;
+        // TODO:
+        // Translate the positions onto the ships frame
+        auto ang = vec_angle(dir_vec, obj_vec);
+        glm::vec2 scaled {dist_vec.x, dist_vec.y};
+
+        // Descretize / normalize to dimensions
+        // Check for bounds
+        if (glm::abs(scaled.x) > HALF_RES_F
+            || (glm::abs(scaled.y) > HALF_RES_F))
+            return;
+
+        // Scale for distance away
+        int radius_desc = static_cast<int>(radius / obj_vec.z);
+        if (radius_desc == 0)
+            return;
+
+        const int desc_x = static_cast<int>(scaled.x);
+        const int desc_y = static_cast<int>(scaled.y);
+        const int y_min = std::max(0, desc_y - radius_desc);
+        const int y_max =
+            std::min(this->mask.num_rows<int>() - 1, desc_y + radius_desc);
+        const int x_min = std::max(0, desc_x - radius_desc);
+        const int x_max =
+            std::min(this->mask.num_cols<int>() - 1, desc_x + radius_desc);
+        const int r2 = radius_desc * radius_desc;
+
+        // draw circle
+        auto& grid = this->mask;
+        for (int y = y_min; y <= y_max; ++y) {
+            const int dy = y - desc_y;
+            for (int x = x_min; x <= x_max; ++x) {
+                const int dx = x - desc_x;
+                if (dx * dx + dy * dy <= r2)
+                    grid[y][x]++;
+            }
+        }
+    }
+
+    inline void print() const {
+        auto fmt = std::format("{}", this->mask);
+        printf("%s\n", fmt.c_str());
+    }
+
+    constexpr static inline Mask init_thing() {
+        auto mask = collision::Mask {};
+        auto f = std::array<unsigned int, mask.RESOLUTION>();
+        f.fill(69);
+        mask.mask.row(3) = f;
+        return mask;
+    }
+
+    static inline auto& get_thing() {
+        static auto thing = init_thing();
+        return thing.mask;
     }
 };
 
